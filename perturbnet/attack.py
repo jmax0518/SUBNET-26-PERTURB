@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import math
 import os
+import time
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
@@ -81,31 +82,19 @@ def compute_psnr_db(x_clean: torch.Tensor, x_adv: torch.Tensor) -> float:
 
 
 def _early_exit_score_threshold() -> float:
-    return float(os.getenv("PERTURB_MINER_EARLY_EXIT_SCORE", "0.92"))
+    return float(os.getenv("PERTURB_MINER_EARLY_EXIT_SCORE", "0.905"))
+
+
+def early_exit_score_threshold() -> float:
+    return _early_exit_score_threshold()
+
+
+def _hard_retry_budget_ms() -> float:
+    return float(os.getenv("PERTURB_MINER_HARD_RETRY_BUDGET_MS", "10000"))
 
 
 def _png_roundtrip(adv: torch.Tensor, device: torch.device) -> torch.Tensor:
     return decode_image_b64(encode_image_b64(adv)).to(device)
-
-
-def ranked_attack_targets(
-    model: torch.nn.Module,
-    clean: torch.Tensor,
-    source_index: int,
-    k: int = 5,
-) -> list[int]:
-    """Rank alternative classes by logit margin (easiest flip first)."""
-    with torch.no_grad():
-        logits = logits_for_images(model=model, image_bchw=clean.unsqueeze(0))[0]
-    source_logit = float(logits[source_index].item())
-    margins: list[tuple[int, float]] = []
-    for idx in range(int(logits.shape[0])):
-        if idx == source_index:
-            continue
-        margins.append((idx, float(logits[idx].item()) - source_logit))
-    margins.sort(key=lambda item: item[1], reverse=True)
-    limit = max(1, k)
-    return [idx for idx, _ in margins[:limit]]
 
 
 def _apgd_steps(mode: str) -> int:
@@ -220,6 +209,95 @@ def binary_search_min_linf(
     return best
 
 
+def _probe_target_flip_rmse(
+    model: torch.nn.Module,
+    clean: torch.Tensor,
+    source_index: int,
+    target_index: int,
+    epsilon: float,
+    min_delta: float,
+) -> float:
+    """Quick APGD probe: return RMSE if flip succeeds, else infinity."""
+    adv = targeted_apgd_linf(
+        model=model,
+        clean=clean,
+        source_index=source_index,
+        target_index=target_index,
+        epsilon=epsilon,
+        steps=max(4, int(os.getenv("PERTURB_MINER_PROBE_STEPS", "4"))),
+        restarts=1,
+        targeted=True,
+    )
+    if predict_index(model=model, image_chw=adv) == source_index:
+        return float("inf")
+    adv = binary_search_min_linf(
+        model=model,
+        clean=clean,
+        adv=adv,
+        source_index=source_index,
+        min_delta=min_delta,
+        epsilon=epsilon,
+        iterations=6,
+    )
+    if predict_index(model=model, image_chw=adv) == source_index:
+        return float("inf")
+    return rmse(clean, adv)
+
+
+def _rank_by_logit_margin(
+    model: torch.nn.Module,
+    clean: torch.Tensor,
+    source_index: int,
+    k: int,
+) -> list[int]:
+    with torch.no_grad():
+        logits = logits_for_images(model=model, image_bchw=clean.unsqueeze(0))[0]
+    source_logit = float(logits[source_index].item())
+    margins: list[tuple[int, float]] = []
+    for idx in range(int(logits.shape[0])):
+        if idx == source_index:
+            continue
+        margins.append((idx, float(logits[idx].item()) - source_logit))
+    margins.sort(key=lambda item: item[1], reverse=True)
+    limit = max(1, k)
+    return [idx for idx, _ in margins[:limit]]
+
+
+def ranked_attack_targets(
+    model: torch.nn.Module,
+    clean: torch.Tensor,
+    source_index: int,
+    k: int = 5,
+    epsilon: float = DEFAULT_MAX_LINF_DELTA,
+    min_delta: float = 0.003,
+    use_rmse_probe: bool = False,
+) -> list[int]:
+    """Rank targets by logit margin; optional RMSE probe when fast pass fails."""
+    if not use_rmse_probe:
+        return _rank_by_logit_margin(model=model, clean=clean, source_index=source_index, k=k)
+
+    margins = _rank_by_logit_margin(model=model, clean=clean, source_index=source_index, k=max(k, 16))
+    margin_map = {idx: rank for rank, idx in enumerate(margins)}
+
+    probe_k = max(k, int(os.getenv("PERTURB_MINER_PROBE_K", "5")))
+    probe_candidates = margins[:probe_k]
+    scored: list[tuple[int, float, int]] = []
+    for idx in probe_candidates:
+        probe_rmse = _probe_target_flip_rmse(
+            model=model,
+            clean=clean,
+            source_index=source_index,
+            target_index=idx,
+            epsilon=epsilon,
+            min_delta=min_delta,
+        )
+        scored.append((idx, probe_rmse, margin_map.get(idx, 999)))
+
+    scored.sort(key=lambda item: (item[1], item[2]))
+    limit = max(1, k)
+    return [idx for idx, _, _ in scored[:limit]]
+
+
 def refine_high_gradient_mask(
     model: torch.nn.Module,
     clean: torch.Tensor,
@@ -228,11 +306,13 @@ def refine_high_gradient_mask(
     target_index: int | None,
     epsilon: float,
     min_delta: float,
+    effective_max_delta: float,
+    bs_iterations: int = 8,
 ) -> torch.Tensor:
     device = clean.device
     delta = adv - clean
     best = adv
-    best_rmse = rmse(clean, adv)
+    best_score = -1.0
 
     adv_tmp = adv.detach()
     adv_tmp.requires_grad_(True)
@@ -244,7 +324,8 @@ def refine_high_gradient_mask(
     grad = torch.autograd.grad(loss, adv_tmp)[0]
     pixel_importance = grad.abs().amax(dim=0)
 
-    for keep_ratio in (1.0, 0.85, 0.7, 0.55):
+    keep_ratios = (1.0, 0.85, 0.7, 0.55, 0.45, 0.35, 0.25)
+    for keep_ratio in keep_ratios:
         if keep_ratio >= 1.0:
             masked = delta
         else:
@@ -254,22 +335,28 @@ def refine_high_gradient_mask(
             pixel_mask = (pixel_importance >= threshold).float()
             masked = delta * pixel_mask
 
-        candidate = project_linf(clean, clean + masked, epsilon)
-        candidate = binary_search_min_linf(
+        candidate_adv = project_linf(clean, clean + masked, epsilon)
+        candidate_adv = binary_search_min_linf(
             model=model,
             clean=clean,
-            adv=candidate,
+            adv=candidate_adv,
             source_index=source_index,
             min_delta=min_delta,
             epsilon=epsilon,
-            iterations=8,
+            iterations=bs_iterations,
         )
-        if predict_index(model=model, image_chw=candidate) == source_index:
-            continue
-        candidate_rmse = rmse(clean, candidate)
-        if candidate_rmse < best_rmse:
-            best = candidate
-            best_rmse = candidate_rmse
+        scored = evaluate_candidate(
+            clean=clean,
+            adv=candidate_adv,
+            source_index=source_index,
+            min_delta=min_delta,
+            effective_max_delta=effective_max_delta,
+            model=model,
+            use_png=True,
+        )
+        if scored is not None and scored.perturbation_score > best_score:
+            best = scored.adv
+            best_score = scored.perturbation_score
 
     return best
 
@@ -339,30 +426,26 @@ def _epsilon_ladder(challenge_epsilon: float, min_delta: float, max_linf_delta: 
     return ladder or [cap]
 
 
-def run_quality_linf_attack(
+def _hard_retry_thresholds() -> tuple[float, float]:
+    score_floor = float(os.getenv("PERTURB_MINER_HARD_RETRY_SCORE", "0.895"))
+    rmse_ceiling = float(os.getenv("PERTURB_MINER_HARD_RETRY_RMSE", "0.003"))
+    return score_floor, rmse_ceiling
+
+
+def _collect_attack_candidates(
     model: torch.nn.Module,
     clean: torch.Tensor,
     source_index: int,
-    challenge_epsilon: float,
+    target_indices: list[int],
+    ladder: list[float],
     min_delta: float,
-    max_linf_delta: float = DEFAULT_MAX_LINF_DELTA,
-) -> tuple[torch.Tensor, int, float, float]:
-    effective_max = min(challenge_epsilon, max_linf_delta)
-    ladder = _epsilon_ladder(challenge_epsilon, min_delta, max_linf_delta)
-    target_k = int(os.getenv("PERTURB_MINER_TOP_K", "5"))
-    target_count = int(os.getenv("PERTURB_MINER_TARGET_COUNT", "3"))
-    target_indices = ranked_attack_targets(
-        model=model,
-        clean=clean,
-        source_index=source_index,
-        k=target_k,
-    )[: max(1, target_count)]
-    early_exit_score = _early_exit_score_threshold()
-
+    effective_max: float,
+    steps: int,
+    restarts: int,
+    bs_iterations: int,
+    early_exit_score: float,
+) -> tuple[list[AttackCandidate], AttackCandidate | None]:
     candidates: list[AttackCandidate] = []
-    steps = _apgd_steps("search")
-    restarts = _apgd_restarts()
-
     search_plans: list[tuple[int | None, bool]] = [(idx, True) for idx in target_indices]
     search_plans.append((None, False))
 
@@ -392,6 +475,7 @@ def run_quality_linf_attack(
                 source_index=source_index,
                 min_delta=min_delta,
                 epsilon=epsilon,
+                iterations=bs_iterations,
             )
             logger.info(f"Binary search min Linf for epsilon={epsilon} found adv with norm={linf_norm(clean, adv)}")
             adv = refine_high_gradient_mask(
@@ -402,6 +486,8 @@ def run_quality_linf_attack(
                 target_index=target_index,
                 epsilon=epsilon,
                 min_delta=min_delta,
+                effective_max_delta=effective_max,
+                bs_iterations=max(8, bs_iterations // 2),
             )
 
             candidate = evaluate_candidate(
@@ -418,13 +504,86 @@ def run_quality_linf_attack(
                 candidates.append(candidate)
                 if candidate.perturbation_score >= early_exit_score:
                     logger.info(f"Early exit with perturbation_score={candidate.perturbation_score}")
-                    return (
-                        candidate.adv,
-                        candidate.pred_index,
-                        candidate.linf,
-                        candidate.perturbation_score,
-                    )
+                    return candidates, candidate
                 break
+    return candidates, None
+
+
+def run_quality_linf_attack(
+    model: torch.nn.Module,
+    clean: torch.Tensor,
+    source_index: int,
+    challenge_epsilon: float,
+    min_delta: float,
+    max_linf_delta: float = DEFAULT_MAX_LINF_DELTA,
+) -> tuple[torch.Tensor, int, float, float]:
+    attack_started = time.perf_counter()
+    effective_max = min(challenge_epsilon, max_linf_delta)
+    ladder = _epsilon_ladder(challenge_epsilon, min_delta, max_linf_delta)
+    target_k = int(os.getenv("PERTURB_MINER_TOP_K", "5"))
+    target_count = int(os.getenv("PERTURB_MINER_TARGET_COUNT", "3"))
+    early_exit_score = _early_exit_score_threshold()
+
+    steps = _apgd_steps("search")
+    restarts = _apgd_restarts()
+    bs_iterations = int(os.getenv("PERTURB_MINER_BS_ITERATIONS", "14"))
+
+    # Fast pass: logit-margin targets only (no RMSE probes).
+    margin_targets = ranked_attack_targets(
+        model=model,
+        clean=clean,
+        source_index=source_index,
+        k=target_k,
+        epsilon=effective_max,
+        min_delta=min_delta,
+        use_rmse_probe=False,
+    )[: max(1, target_count)]
+
+    candidates, early = _collect_attack_candidates(
+        model=model,
+        clean=clean,
+        source_index=source_index,
+        target_indices=margin_targets,
+        ladder=ladder,
+        min_delta=min_delta,
+        effective_max=effective_max,
+        steps=steps,
+        restarts=restarts,
+        bs_iterations=bs_iterations,
+        early_exit_score=early_exit_score,
+    )
+    if early is not None:
+        return early.adv, early.pred_index, early.linf, early.perturbation_score
+
+    # Fallback: RMSE-probed targets when fast pass found nothing.
+    if not candidates:
+        logger.info("Fast pass found no candidates; ranking targets with RMSE probe")
+        probe_targets = ranked_attack_targets(
+            model=model,
+            clean=clean,
+            source_index=source_index,
+            k=target_k,
+            epsilon=effective_max,
+            min_delta=min_delta,
+            use_rmse_probe=True,
+        )[: max(1, target_count)]
+        probe_candidates, probe_early = _collect_attack_candidates(
+            model=model,
+            clean=clean,
+            source_index=source_index,
+            target_indices=probe_targets,
+            ladder=ladder,
+            min_delta=min_delta,
+            effective_max=effective_max,
+            steps=steps,
+            restarts=restarts,
+            bs_iterations=bs_iterations,
+            early_exit_score=early_exit_score,
+        )
+        if probe_early is not None:
+            return probe_early.adv, probe_early.pred_index, probe_early.linf, probe_early.perturbation_score
+        candidates.extend(probe_candidates)
+
     logger.info(f"Found {len(candidates)} candidates")
     if not candidates:
         logger.info(f"No candidates found, using APGD-Linf with epsilon={effective_max}")
@@ -447,6 +606,56 @@ def run_quality_linf_attack(
         candidates,
         key=lambda c: (c.perturbation_score, -c.linf, -c.rmse),
     )
+
+    score_floor, rmse_ceiling = _hard_retry_thresholds()
+    elapsed_ms = (time.perf_counter() - attack_started) * 1000.0
+    retry_budget_ms = _hard_retry_budget_ms()
+    needs_hard_retry = best.perturbation_score < score_floor or best.rmse > rmse_ceiling
+
+    if needs_hard_retry and elapsed_ms >= retry_budget_ms:
+        logger.info(
+            f"Skipping hard-image retry: elapsed_ms={elapsed_ms:.0f} >= budget_ms={retry_budget_ms:.0f}"
+        )
+    elif needs_hard_retry:
+        logger.info(
+            f"Hard-image retry: score={best.perturbation_score:.6f} rmse={best.rmse:.6f} "
+            f"elapsed_ms={elapsed_ms:.0f} thresholds score<{score_floor} rmse>{rmse_ceiling}"
+        )
+        retry_targets = ranked_attack_targets(
+            model=model,
+            clean=clean,
+            source_index=source_index,
+            k=max(target_k, 8),
+            epsilon=effective_max,
+            min_delta=min_delta,
+            use_rmse_probe=True,
+        )[: max(1, target_count + 2)]
+        retry_steps = int(os.getenv("PERTURB_MINER_HARD_RETRY_APGD_STEPS", "60"))
+        retry_restarts = max(restarts, int(os.getenv("PERTURB_MINER_HARD_RETRY_RESTARTS", "2")))
+        retry_bs = int(os.getenv("PERTURB_MINER_HARD_RETRY_BS_ITERATIONS", "20"))
+        retry_candidates, retry_early = _collect_attack_candidates(
+            model=model,
+            clean=clean,
+            source_index=source_index,
+            target_indices=retry_targets,
+            ladder=ladder,
+            min_delta=min_delta,
+            effective_max=effective_max,
+            steps=retry_steps,
+            restarts=retry_restarts,
+            bs_iterations=retry_bs,
+            early_exit_score=early_exit_score,
+        )
+        if retry_early is not None:
+            return retry_early.adv, retry_early.pred_index, retry_early.linf, retry_early.perturbation_score
+        if retry_candidates:
+            retry_best = max(
+                retry_candidates,
+                key=lambda c: (c.perturbation_score, -c.linf, -c.rmse),
+            )
+            if retry_best.perturbation_score > best.perturbation_score:
+                best = retry_best
+
     return best.adv, best.pred_index, best.linf, best.perturbation_score
 
 
@@ -457,19 +666,40 @@ def apply_png_safe_shrink(
     source_index: int,
     epsilon: float,
     min_delta: float,
+    effective_max_delta: float | None = None,
+    target_index: int | None = None,
+    skip_refine: bool = False,
 ) -> tuple[torch.Tensor, int, float]:
-    """Final safety pass on PNG-decoded tensor (candidate may already be PNG-roundtripped)."""
+    """Final safety pass on PNG-decoded tensor with optional RMSE refinement."""
+    effective_max = effective_max_delta if effective_max_delta is not None else epsilon
     adv = _png_roundtrip(adv, clean.device)
     safe_epsilon = max(min_delta, epsilon - (2.0 / 255.0))
     current_norm = linf_norm(clean, adv)
-    if current_norm <= safe_epsilon:
-        pred = predict_index(model=model, image_chw=adv)
-        return adv, pred, current_norm
+    if current_norm > safe_epsilon:
+        scale = safe_epsilon / max(current_norm, 1e-12)
+        shrunk = (clean + scale * (adv - clean)).clamp(0.0, 1.0)
+        shrunk = _png_roundtrip(shrunk, clean.device)
+        if predict_index(model=model, image_chw=shrunk) != source_index:
+            adv = shrunk
 
-    scale = safe_epsilon / max(current_norm, 1e-12)
-    shrunk = (clean + scale * (adv - clean)).clamp(0.0, 1.0)
-    shrunk = _png_roundtrip(shrunk, clean.device)
-    if predict_index(model=model, image_chw=shrunk) != source_index:
-        adv = shrunk
+    if not skip_refine:
+        flip_target = target_index
+        if flip_target is None:
+            pred = predict_index(model=model, image_chw=adv)
+            if pred != source_index:
+                flip_target = pred
+
+        if flip_target is not None and flip_target != source_index:
+            adv = refine_high_gradient_mask(
+                model=model,
+                clean=clean,
+                adv=adv,
+                source_index=source_index,
+                target_index=flip_target,
+                epsilon=safe_epsilon,
+                min_delta=min_delta,
+                effective_max_delta=min(effective_max, safe_epsilon),
+                bs_iterations=6,
+            )
     pred = predict_index(model=model, image_chw=adv)
     return adv, pred, linf_norm(clean, adv)

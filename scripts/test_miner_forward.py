@@ -5,8 +5,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import sys
 import time
+from dataclasses import asdict, dataclass
 from pathlib import Path
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
@@ -32,6 +34,27 @@ DEFAULT_IMAGE_DIRS = (
     PROJECT_ROOT / "assets",
 )
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
+
+
+@dataclass
+class ImageTestResult:
+    image: str
+    passed: bool
+    shape: tuple[int, int, int]
+    true_label: str
+    new_label: str | None
+    epsilon: float
+    min_delta: float
+    effective_max_delta: float
+    elapsed_ms: int
+    timeout_seconds: int
+    linf_norm: float | None
+    rmse: float | None
+    ssim: float | None
+    psnr_db: float | None
+    perturbation_score: float | None
+    changed_image: bool | None
+    error: str | None = None
 
 
 def _build_miner(device: torch.device) -> PerturbMiner:
@@ -98,7 +121,7 @@ async def run_forward_test_on_image(
     min_delta: float,
     timeout_seconds: int,
     save_output_dir: Path | None,
-) -> bool:
+) -> ImageTestResult:
     true_label = predict_label(miner.model, clean)
     true_index = predict_index(model=miner.model, image_chw=clean)
     effective_max_delta = min(epsilon, DEFAULT_MAX_LINF_DELTA)
@@ -123,12 +146,54 @@ async def run_forward_test_on_image(
     print("Running miner.forward()...", flush=True)
 
     started = time.perf_counter()
-    result = await miner.forward(synapse)
+    try:
+        result = await miner.forward(synapse)
+    except Exception as exc:
+        elapsed_ms = int((time.perf_counter() - started) * 1000)
+        print(f"FAIL: forward() raised {exc} (elapsed_ms={elapsed_ms})")
+        return ImageTestResult(
+            image=image_path.name,
+            passed=False,
+            shape=tuple(clean.shape),
+            true_label=true_label,
+            new_label=None,
+            epsilon=epsilon,
+            min_delta=min_delta,
+            effective_max_delta=effective_max_delta,
+            elapsed_ms=elapsed_ms,
+            timeout_seconds=timeout_seconds,
+            linf_norm=None,
+            rmse=None,
+            ssim=None,
+            psnr_db=None,
+            perturbation_score=None,
+            changed_image=None,
+            error=str(exc),
+        )
+
     elapsed_ms = int((time.perf_counter() - started) * 1000)
 
     if result.perturbed_image_b64 is None:
         print(f"FAIL: forward() returned no perturbed_image_b64 (elapsed_ms={elapsed_ms})")
-        return False
+        return ImageTestResult(
+            image=image_path.name,
+            passed=False,
+            shape=tuple(clean.shape),
+            true_label=true_label,
+            new_label=None,
+            epsilon=epsilon,
+            min_delta=min_delta,
+            effective_max_delta=effective_max_delta,
+            elapsed_ms=elapsed_ms,
+            timeout_seconds=timeout_seconds,
+            linf_norm=None,
+            rmse=None,
+            ssim=None,
+            psnr_db=None,
+            perturbation_score=None,
+            changed_image=None,
+            error="no perturbed_image_b64",
+        )
 
     adv = decode_image_b64(result.perturbed_image_b64).to(clean.device)
     new_label = predict_label(miner.model, adv)
@@ -153,7 +218,25 @@ async def run_forward_test_on_image(
         valid_norm = min_delta <= norm <= effective_max_delta + 1e-6
         print(f"validator_gates=FAIL flipped={flipped} valid_norm={valid_norm}")
         print("FAIL")
-        return False
+        return ImageTestResult(
+            image=image_path.name,
+            passed=False,
+            shape=tuple(clean.shape),
+            true_label=true_label,
+            new_label=new_label,
+            epsilon=epsilon,
+            min_delta=min_delta,
+            effective_max_delta=effective_max_delta,
+            elapsed_ms=elapsed_ms,
+            timeout_seconds=timeout_seconds,
+            linf_norm=norm,
+            rmse=None,
+            ssim=None,
+            psnr_db=None,
+            perturbation_score=None,
+            changed_image=changed,
+            error="validator_gates_failed",
+        )
 
     print(
         f"validator_gates=PASS linf={candidate.linf:.6f} rmse={candidate.rmse:.6f} "
@@ -172,7 +255,24 @@ async def run_forward_test_on_image(
         print(f"WARN: exceeded timeout ({elapsed_ms}ms > {timeout_seconds * 1000}ms)")
 
     print("PASS")
-    return True
+    return ImageTestResult(
+        image=image_path.name,
+        passed=True,
+        shape=tuple(clean.shape),
+        true_label=true_label,
+        new_label=new_label,
+        epsilon=epsilon,
+        min_delta=min_delta,
+        effective_max_delta=effective_max_delta,
+        elapsed_ms=elapsed_ms,
+        timeout_seconds=timeout_seconds,
+        linf_norm=candidate.linf,
+        rmse=candidate.rmse,
+        ssim=candidate.ssim,
+        psnr_db=candidate.psnr_db,
+        perturbation_score=candidate.perturbation_score,
+        changed_image=changed,
+    )
 
 
 async def run_forward_tests(
@@ -182,6 +282,7 @@ async def run_forward_tests(
     min_delta: float,
     timeout_seconds: int,
     save_output_dir: Path | None,
+    json_out: Path | None,
 ) -> int:
     images = discover_images(image_path=image_path, image_dir=image_dir)
     if not images:
@@ -196,16 +297,37 @@ async def run_forward_tests(
 
     miner = _build_miner(device)
     print("Model ready.", flush=True)
-    passed = 0
+    results: list[ImageTestResult] = []
     for path in images:
         try:
             clean = _load_image_chw(path, device)
         except Exception as exc:
             print(f"\n=== {path.name} ===")
             print(f"FAIL: could not load image: {exc}")
+            results.append(
+                ImageTestResult(
+                    image=path.name,
+                    passed=False,
+                    shape=(0, 0, 0),
+                    true_label="",
+                    new_label=None,
+                    epsilon=epsilon,
+                    min_delta=min_delta,
+                    effective_max_delta=min(epsilon, DEFAULT_MAX_LINF_DELTA),
+                    elapsed_ms=0,
+                    timeout_seconds=timeout_seconds,
+                    linf_norm=None,
+                    rmse=None,
+                    ssim=None,
+                    psnr_db=None,
+                    perturbation_score=None,
+                    changed_image=None,
+                    error=f"load_failed: {exc}",
+                )
+            )
             continue
 
-        ok = await run_forward_test_on_image(
+        result = await run_forward_test_on_image(
             miner=miner,
             clean=clean,
             image_path=path,
@@ -214,10 +336,32 @@ async def run_forward_tests(
             timeout_seconds=timeout_seconds,
             save_output_dir=save_output_dir,
         )
-        if ok:
-            passed += 1
+        results.append(result)
 
+    passed = sum(1 for r in results if r.passed)
     print(f"\nSummary: {passed}/{len(images)} passed")
+
+    if json_out is not None:
+        json_out.parent.mkdir(parents=True, exist_ok=True)
+        scores = [r.perturbation_score for r in results if r.perturbation_score is not None]
+        payload = {
+            "device": str(device),
+            "epsilon": epsilon,
+            "min_delta": min_delta,
+            "timeout_seconds": timeout_seconds,
+            "total": len(results),
+            "passed": passed,
+            "summary": {
+                "perturbation_score_mean": float(np.mean(scores)) if scores else None,
+                "perturbation_score_std": float(np.std(scores)) if scores else None,
+                "perturbation_score_min": float(np.min(scores)) if scores else None,
+                "perturbation_score_max": float(np.max(scores)) if scores else None,
+            },
+            "results": [asdict(r) for r in results],
+        }
+        json_out.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        print(f"Wrote JSON results to {json_out}")
+
     return 0 if passed == len(images) else 1
 
 
@@ -247,11 +391,18 @@ def main() -> int:
         default="",
         help="If set, write perturbed PNGs to this directory",
     )
+    parser.add_argument(
+        "--json-out",
+        type=str,
+        default="",
+        help="If set, write structured JSON results to this file",
+    )
     args = parser.parse_args()
 
     image_path = args.image_path.strip() or None
     image_dir = args.image_dir.strip() or None
     save_output_dir = Path(args.save_output_dir).expanduser().resolve() if args.save_output_dir.strip() else None
+    json_out = Path(args.json_out).expanduser().resolve() if args.json_out.strip() else None
 
     if args.list_images:
         return list_available_images(image_path=image_path, image_dir=image_dir)
@@ -264,6 +415,7 @@ def main() -> int:
             min_delta=args.min_delta,
             timeout_seconds=args.timeout_seconds,
             save_output_dir=save_output_dir,
+            json_out=json_out,
         )
     )
 

@@ -7,7 +7,12 @@ import typing
 import bittensor as bt
 import torch
 
-from perturbnet.attack import apply_png_safe_shrink, linf_norm, run_quality_linf_attack
+from perturbnet.attack import (
+    apply_png_safe_shrink,
+    early_exit_score_threshold,
+    linf_norm,
+    run_quality_linf_attack,
+)
 from perturbnet.image_io import decode_image_b64, encode_image_b64
 from perturbnet.model import load_efficientnet_v2_l, resolve_target_index
 from perturbnet.protocol import AttackChallenge
@@ -183,6 +188,9 @@ class PerturbMiner:
             source_index=target_index,
             epsilon=epsilon,
             min_delta=min_delta,
+            effective_max_delta=min(epsilon, 0.03),
+            target_index=final_pred,
+            skip_refine=quality_score >= early_exit_score_threshold(),
         )
 
         synapse.perturbed_image_b64 = encode_image_b64(adv)
