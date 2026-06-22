@@ -6,10 +6,10 @@ import typing
 
 import bittensor as bt
 import torch
-import torch.nn.functional as F
 
+from perturbnet.attack import apply_png_safe_shrink, linf_norm, run_quality_linf_attack
 from perturbnet.image_io import decode_image_b64, encode_image_b64
-from perturbnet.model import load_efficientnet_v2_l, logits_for_images, predict_index, resolve_target_index
+from perturbnet.model import load_efficientnet_v2_l, resolve_target_index
 from perturbnet.protocol import AttackChallenge
 
 logger = pylogging.getLogger(__name__)
@@ -155,7 +155,6 @@ class PerturbMiner:
             logger.info(f"Skipping task={getattr(synapse, 'task_id', 'unknown')}: unsupported norm_type={synapse.norm_type}")
             synapse.perturbed_image_b64 = synapse.clean_image_b64
             return synapse
-
         clean = decode_image_b64(synapse.clean_image_b64).to(self.device)
         target_index = resolve_target_index(synapse.true_label)
         if target_index is None:
@@ -167,37 +166,30 @@ class PerturbMiner:
 
         epsilon = float(synapse.epsilon)
         min_delta = float(getattr(synapse, "min_delta", 0.002))
+        logger.info(f"Running run_quality_linf_attack with epsilon={epsilon} and min_delta={min_delta}")
+        adv, final_pred, best_delta, quality_score = run_quality_linf_attack(
+            model=self.model,
+            clean=clean,
+            source_index=target_index,
+            challenge_epsilon=epsilon,
+            min_delta=min_delta,
+        )
+        logger.info(f"run_quality_linf_attack returned adv with norm={linf_norm(clean, adv)}")
+        logger.info(f"Running apply_png_safe_shrink with quality_score={quality_score}")
+        adv, final_pred, best_delta = apply_png_safe_shrink(
+            model=self.model,
+            clean=clean,
+            adv=adv,
+            source_index=target_index,
+            epsilon=epsilon,
+            min_delta=min_delta,
+        )
 
-        # Basic default algorithm: small-step untargeted PGD.
-        steps = 10
-        step_size = max(epsilon / 4.0, 1.0 / 255.0)
-        adv = clean.clone().detach()
-        best = adv.clone()
-        best_delta = 0.0
-        final_pred = target_index
-        for _ in range(steps):
-            adv.requires_grad_(True)
-            logits = logits_for_images(model=self.model, image_bchw=adv.unsqueeze(0))
-            loss = F.cross_entropy(logits, torch.tensor([target_index], device=self.device))
-            grad = torch.autograd.grad(loss, adv)[0]
-            adv = adv.detach() + step_size * grad.sign()
-            adv = torch.max(torch.min(adv, clean + epsilon), clean - epsilon).clamp(0.0, 1.0)
-
-            pred = predict_index(model=self.model, image_chw=adv)
-            final_pred = pred
-            delta = float((adv - clean).abs().max().item())
-            if delta > best_delta:
-                best = adv.clone()
-                best_delta = delta
-            if pred != target_index and delta >= min_delta:
-                best = adv.clone()
-                break
-
-        adv = best
         synapse.perturbed_image_b64 = encode_image_b64(adv)
         logger.info(
             f"Finished task={getattr(synapse, 'task_id', 'unknown')} target_idx={target_index} "
-            f"final_pred={final_pred} best_delta={best_delta:.6f} min_delta={min_delta:.6f}"
+            f"final_pred={final_pred} best_delta={best_delta:.6f} min_delta={min_delta:.6f} "
+            f"quality_score={quality_score:.6f}"
         )
         return synapse
 
