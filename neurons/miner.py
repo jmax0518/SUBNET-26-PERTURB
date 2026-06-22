@@ -171,16 +171,35 @@ class PerturbMiner:
 
         epsilon = float(synapse.epsilon)
         min_delta = float(getattr(synapse, "min_delta", 0.002))
-        logger.info(f"Running run_quality_linf_attack with epsilon={epsilon} and min_delta={min_delta}")
+        timeout_seconds = float(getattr(synapse, "timeout_seconds", 60) or 60)
+        forward_started = time.perf_counter()
+        logger.info(
+            f"Running run_quality_linf_attack with epsilon={epsilon} min_delta={min_delta} "
+            f"timeout_seconds={timeout_seconds}"
+        )
         adv, final_pred, best_delta, quality_score = run_quality_linf_attack(
             model=self.model,
             clean=clean,
             source_index=target_index,
             challenge_epsilon=epsilon,
             min_delta=min_delta,
+            timeout_seconds=timeout_seconds,
+            device=self.device,
         )
         logger.info(f"run_quality_linf_attack returned adv with norm={linf_norm(clean, adv)}")
-        logger.info(f"Running apply_png_safe_shrink with quality_score={quality_score}")
+        elapsed_ms = (time.perf_counter() - forward_started) * 1000.0
+        post_reserve_ms = float(os.getenv("PERTURB_MINER_POST_RESERVE_MS", "2500"))
+        cuda_post_rush = (
+            self.device.type == "cuda"
+            and elapsed_ms >= timeout_seconds * 1000.0 - post_reserve_ms
+        )
+        skip_refine = quality_score >= early_exit_score_threshold() or cuda_post_rush
+        if cuda_post_rush:
+            logger.info(
+                f"Skipping PNG refine: elapsed_ms={elapsed_ms:.0f} "
+                f"timeout_budget_ms={timeout_seconds * 1000.0:.0f}"
+            )
+        logger.info(f"Running apply_png_safe_shrink with quality_score={quality_score} skip_refine={skip_refine}")
         adv, final_pred, best_delta = apply_png_safe_shrink(
             model=self.model,
             clean=clean,
@@ -190,7 +209,7 @@ class PerturbMiner:
             min_delta=min_delta,
             effective_max_delta=min(epsilon, 0.03),
             target_index=final_pred,
-            skip_refine=quality_score >= early_exit_score_threshold(),
+            skip_refine=skip_refine,
         )
 
         synapse.perturbed_image_b64 = encode_image_b64(adv)

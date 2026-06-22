@@ -43,6 +43,70 @@ class AttackCandidate:
     perturbation_score: float
 
 
+@dataclass
+class AttackDeadline:
+    """CUDA-only wall-clock budget for attack search (disabled on CPU)."""
+
+    deadline_mono: float | None
+
+    @classmethod
+    def for_device(cls, timeout_seconds: float, device: torch.device) -> AttackDeadline:
+        if device.type != "cuda":
+            return cls(deadline_mono=None)
+        reserve_ms = _post_reserve_ms()
+        budget_ms = max(1000.0, float(timeout_seconds) * 1000.0 - reserve_ms)
+        return cls(deadline_mono=time.perf_counter() + budget_ms / 1000.0)
+
+    @property
+    def enabled(self) -> bool:
+        return self.deadline_mono is not None
+
+    def expired(self) -> bool:
+        return self.enabled and time.perf_counter() >= self.deadline_mono
+
+    def remaining_ms(self) -> float:
+        if not self.enabled or self.deadline_mono is None:
+            return float("inf")
+        return max(0.0, (self.deadline_mono - time.perf_counter()) * 1000.0)
+
+
+def _post_reserve_ms() -> float:
+    """Tail budget reserved for PNG shrink, encode, and response overhead."""
+    return float(os.getenv("PERTURB_MINER_POST_RESERVE_MS", "2500"))
+
+
+def _candidate_sort_key(candidate: AttackCandidate) -> tuple[float, float, float]:
+    return (candidate.perturbation_score, -candidate.linf, -candidate.rmse)
+
+
+def _pick_best_candidate(candidates: list[AttackCandidate]) -> AttackCandidate | None:
+    if not candidates:
+        return None
+    return max(candidates, key=_candidate_sort_key)
+
+
+def _result_from_candidate(candidate: AttackCandidate) -> tuple[torch.Tensor, int, float, float]:
+    return candidate.adv, candidate.pred_index, candidate.linf, candidate.perturbation_score
+
+
+def _deadline_return_best(
+    deadline: AttackDeadline | None,
+    candidates: list[AttackCandidate],
+    phase: str,
+) -> tuple[torch.Tensor, int, float, float] | None:
+    if deadline is None or not deadline.expired():
+        return None
+    best = _pick_best_candidate(candidates)
+    if best is None:
+        logger.info(f"Attack deadline during {phase}: no valid candidate yet")
+        return None
+    logger.info(
+        f"Attack deadline during {phase}: returning best score={best.perturbation_score:.6f} "
+        f"remaining_ms={deadline.remaining_ms():.0f}"
+    )
+    return _result_from_candidate(best)
+
+
 def linf_norm(clean: torch.Tensor, adv: torch.Tensor) -> float:
     return float((adv - clean).abs().max().item())
 
@@ -107,6 +171,147 @@ def _apgd_restarts() -> int:
     return int(os.getenv("PERTURB_MINER_APGD_RESTARTS", "1"))
 
 
+def _image_long_side(clean: torch.Tensor) -> int:
+    return max(int(clean.shape[-2]), int(clean.shape[-1]))
+
+
+def _initial_mask_ratio(clean: torch.Tensor) -> float:
+    long_side = _image_long_side(clean)
+    if long_side <= 512:
+        return float(os.getenv("PERTURB_MINER_MASK_RATIO_SMALL", "0.30"))
+    if long_side <= 1024:
+        return float(os.getenv("PERTURB_MINER_MASK_RATIO_MED", "0.20"))
+    return float(os.getenv("PERTURB_MINER_MASK_RATIO_LARGE", "0.12"))
+
+
+def _mask_expand_ratios(initial: float) -> tuple[float, ...]:
+    step = float(os.getenv("PERTURB_MINER_MASK_EXPAND_STEP", "0.12"))
+    ratios: list[float] = []
+    ratio = min(1.0, max(0.05, initial))
+    while ratio < 1.0 - 1e-9:
+        ratios.append(ratio)
+        ratio = min(1.0, ratio + step)
+    if not ratios or ratios[-1] < 1.0:
+        ratios.append(1.0)
+    return tuple(ratios)
+
+
+def _mask_first_min_side() -> int:
+    return int(os.getenv("PERTURB_MINER_MASK_FIRST_MIN_SIDE", "480"))
+
+
+def compute_pixel_importance(
+    model: torch.nn.Module,
+    image: torch.Tensor,
+    source_index: int,
+    target_index: int | None,
+    targeted: bool,
+) -> torch.Tensor:
+    device = image.device
+    probe = image.detach().clone()
+    probe.requires_grad_(True)
+    logits = logits_for_images(model=model, image_bchw=probe.unsqueeze(0))
+    if targeted and target_index is not None:
+        loss = F.cross_entropy(logits, torch.tensor([target_index], device=device))
+    else:
+        loss = F.cross_entropy(logits, torch.tensor([source_index], device=device))
+    grad = torch.autograd.grad(loss, probe)[0]
+    return grad.abs().amax(dim=0)
+
+
+def pixel_mask_from_importance(pixel_importance: torch.Tensor, keep_ratio: float) -> torch.Tensor:
+    flat = pixel_importance.reshape(-1)
+    k = max(1, int(flat.numel() * keep_ratio))
+    threshold = torch.topk(flat, k=k, largest=True).values.min()
+    return (pixel_importance >= threshold).float()
+
+
+def _dilate_pixel_mask(pixel_mask: torch.Tensor, radius: int) -> torch.Tensor:
+    if radius <= 0:
+        return pixel_mask
+    kernel = 2 * radius + 1
+    expanded = pixel_mask.unsqueeze(0).unsqueeze(0)
+    dilated = F.max_pool2d(expanded, kernel_size=kernel, stride=1, padding=radius)
+    return dilated.squeeze(0).squeeze(0)
+
+
+def _broadcast_pixel_mask(pixel_mask: torch.Tensor, clean: torch.Tensor) -> torch.Tensor:
+    if pixel_mask.ndim == 2:
+        return pixel_mask.unsqueeze(0).expand_as(clean)
+    return pixel_mask.expand_as(clean)
+
+
+def _apply_pixel_mask(clean: torch.Tensor, adv: torch.Tensor, pixel_mask: torch.Tensor) -> torch.Tensor:
+    mask = _broadcast_pixel_mask(pixel_mask, clean)
+    return (clean + (adv - clean) * mask).clamp(0.0, 1.0)
+
+
+def masked_region_apgd_linf(
+    model: torch.nn.Module,
+    clean: torch.Tensor,
+    source_index: int,
+    target_index: int | None,
+    epsilon: float,
+    steps: int,
+    restarts: int,
+    targeted: bool,
+    deadline: AttackDeadline | None = None,
+) -> torch.Tensor | None:
+    """Region-first APGD: start sparse, expand mask until label flips (high-res path)."""
+    if deadline is not None and deadline.expired():
+        return None
+    if _image_long_side(clean) < _mask_first_min_side():
+        return targeted_apgd_linf(
+            model=model,
+            clean=clean,
+            source_index=source_index,
+            target_index=target_index,
+            epsilon=epsilon,
+            steps=steps,
+            restarts=restarts,
+            targeted=targeted,
+            pixel_mask=None,
+        )
+
+    pixel_importance = compute_pixel_importance(
+        model=model,
+        image=clean,
+        source_index=source_index,
+        target_index=target_index,
+        targeted=targeted,
+    )
+    dilate = int(os.getenv("PERTURB_MINER_MASK_DILATE", "3"))
+    expand_ratios = _mask_expand_ratios(_initial_mask_ratio(clean))
+    best_adv = clean.clone()
+
+    for keep_ratio in expand_ratios:
+        if deadline is not None and deadline.expired():
+            return best_adv
+        pixel_mask = pixel_mask_from_importance(pixel_importance, keep_ratio)
+        pixel_mask = _dilate_pixel_mask(pixel_mask, dilate)
+        adv = targeted_apgd_linf(
+            model=model,
+            clean=clean,
+            source_index=source_index,
+            target_index=target_index,
+            epsilon=epsilon,
+            steps=steps,
+            restarts=restarts,
+            targeted=targeted,
+            pixel_mask=pixel_mask,
+        )
+        pred = predict_index(model=model, image_chw=adv)
+        logger.info(
+            f"Masked APGD keep_ratio={keep_ratio:.2f} pred={pred} "
+            f"source={source_index} norm={linf_norm(clean, adv):.6f}"
+        )
+        if pred != source_index:
+            return adv
+        best_adv = adv
+
+    return best_adv
+
+
 def targeted_apgd_linf(
     model: torch.nn.Module,
     clean: torch.Tensor,
@@ -116,18 +321,25 @@ def targeted_apgd_linf(
     steps: int,
     restarts: int,
     targeted: bool,
+    pixel_mask: torch.Tensor | None = None,
 ) -> torch.Tensor:
     device = clean.device
     best_adv = clean.clone()
     best_success: torch.Tensor | None = None
     best_norm = float("inf")
+    if pixel_mask is not None:
+        pixel_mask = pixel_mask.to(device)
 
     for restart in range(restarts):
         if restart == 0:
             adv = clean.clone()
         else:
             noise = torch.empty_like(clean).uniform_(-epsilon, epsilon)
+            if pixel_mask is not None:
+                noise = noise * _broadcast_pixel_mask(pixel_mask, clean)
             adv = project_linf(clean, clean + noise, epsilon)
+            if pixel_mask is not None:
+                adv = _apply_pixel_mask(clean, adv, pixel_mask)
 
         step_size = max(epsilon, 2.0 * epsilon)
         momentum = torch.zeros_like(clean)
@@ -148,12 +360,19 @@ def targeted_apgd_linf(
                 loss = F.cross_entropy(logits, source)
                 grad = torch.autograd.grad(loss, adv)[0]
 
+            if pixel_mask is not None:
+                grad = grad * _broadcast_pixel_mask(pixel_mask, clean)
+
             grad_norm = grad.abs().mean().clamp(min=1e-12)
             momentum = 0.75 * momentum + grad / grad_norm
+            if pixel_mask is not None:
+                momentum = momentum * _broadcast_pixel_mask(pixel_mask, clean)
             if targeted:
                 adv = project_linf(clean, adv.detach() - step_size * momentum.sign(), epsilon)
             else:
                 adv = project_linf(clean, adv.detach() + step_size * momentum.sign(), epsilon)
+            if pixel_mask is not None:
+                adv = _apply_pixel_mask(clean, adv, pixel_mask)
 
             if step > 0 and step % checkpoint == 0:
                 current_loss = float(loss.detach().item())
@@ -218,7 +437,7 @@ def _probe_target_flip_rmse(
     min_delta: float,
 ) -> float:
     """Quick APGD probe: return RMSE if flip succeeds, else infinity."""
-    adv = targeted_apgd_linf(
+    adv = masked_region_apgd_linf(
         model=model,
         clean=clean,
         source_index=source_index,
@@ -228,7 +447,7 @@ def _probe_target_flip_rmse(
         restarts=1,
         targeted=True,
     )
-    if predict_index(model=model, image_chw=adv) == source_index:
+    if adv is None or predict_index(model=model, image_chw=adv) == source_index:
         return float("inf")
     adv = binary_search_min_linf(
         model=model,
@@ -271,8 +490,12 @@ def ranked_attack_targets(
     epsilon: float = DEFAULT_MAX_LINF_DELTA,
     min_delta: float = 0.003,
     use_rmse_probe: bool = False,
+    deadline: AttackDeadline | None = None,
 ) -> list[int]:
     """Rank targets by logit margin; optional RMSE probe when fast pass fails."""
+    if deadline is not None and deadline.expired():
+        return _rank_by_logit_margin(model=model, clean=clean, source_index=source_index, k=k)
+
     if not use_rmse_probe:
         return _rank_by_logit_margin(model=model, clean=clean, source_index=source_index, k=k)
 
@@ -283,6 +506,8 @@ def ranked_attack_targets(
     probe_candidates = margins[:probe_k]
     scored: list[tuple[int, float, int]] = []
     for idx in probe_candidates:
+        if deadline is not None and deadline.expired():
+            break
         probe_rmse = _probe_target_flip_rmse(
             model=model,
             clean=clean,
@@ -295,7 +520,9 @@ def ranked_attack_targets(
 
     scored.sort(key=lambda item: (item[1], item[2]))
     limit = max(1, k)
-    return [idx for idx, _, _ in scored[:limit]]
+    if scored:
+        return [idx for idx, _, _ in scored[:limit]]
+    return margins[:limit]
 
 
 def refine_high_gradient_mask(
@@ -309,31 +536,25 @@ def refine_high_gradient_mask(
     effective_max_delta: float,
     bs_iterations: int = 8,
 ) -> torch.Tensor:
-    device = clean.device
     delta = adv - clean
     best = adv
     best_score = -1.0
 
-    adv_tmp = adv.detach()
-    adv_tmp.requires_grad_(True)
-    logits = logits_for_images(model=model, image_bchw=adv_tmp.unsqueeze(0))
-    if target_index is not None:
-        loss = F.cross_entropy(logits, torch.tensor([target_index], device=device))
-    else:
-        loss = F.cross_entropy(logits, torch.tensor([source_index], device=device))
-    grad = torch.autograd.grad(loss, adv_tmp)[0]
-    pixel_importance = grad.abs().amax(dim=0)
+    pixel_importance = compute_pixel_importance(
+        model=model,
+        image=adv,
+        source_index=source_index,
+        target_index=target_index,
+        targeted=target_index is not None,
+    )
 
     keep_ratios = (1.0, 0.85, 0.7, 0.55, 0.45, 0.35, 0.25)
     for keep_ratio in keep_ratios:
         if keep_ratio >= 1.0:
             masked = delta
         else:
-            flat = pixel_importance.reshape(-1)
-            k = max(1, int(flat.numel() * keep_ratio))
-            threshold = torch.topk(flat, k=k, largest=True).values.min()
-            pixel_mask = (pixel_importance >= threshold).float()
-            masked = delta * pixel_mask
+            pixel_mask = pixel_mask_from_importance(pixel_importance, keep_ratio)
+            masked = delta * _broadcast_pixel_mask(pixel_mask, delta)
 
         candidate_adv = project_linf(clean, clean + masked, epsilon)
         candidate_adv = binary_search_min_linf(
@@ -444,16 +665,24 @@ def _collect_attack_candidates(
     restarts: int,
     bs_iterations: int,
     early_exit_score: float,
+    deadline: AttackDeadline | None = None,
 ) -> tuple[list[AttackCandidate], AttackCandidate | None]:
     candidates: list[AttackCandidate] = []
     search_plans: list[tuple[int | None, bool]] = [(idx, True) for idx in target_indices]
     search_plans.append((None, False))
 
     for target_index, targeted in search_plans:
+        timed_out = _deadline_return_best(deadline, candidates, f"target={target_index}")
+        if timed_out is not None:
+            return candidates, _pick_best_candidate(candidates)
+        if deadline is not None and deadline.expired():
+            break
         logger.info(f"Searching for target={target_index} targeted={targeted}")
         for epsilon in ladder:
+            if deadline is not None and deadline.expired():
+                break
             logger.info(f"Searching for epsilon={epsilon}")
-            adv = targeted_apgd_linf(
+            adv = masked_region_apgd_linf(
                 model=model,
                 clean=clean,
                 source_index=source_index,
@@ -462,7 +691,10 @@ def _collect_attack_candidates(
                 steps=steps,
                 restarts=restarts,
                 targeted=targeted,
+                deadline=deadline,
             )
+            if adv is None:
+                break
             pred = predict_index(model=model, image_chw=adv)
             if pred == source_index:
                 logger.info(f"Skipping epsilon={epsilon} because pred={pred} == source_index={source_index}")
@@ -506,6 +738,13 @@ def _collect_attack_candidates(
                     logger.info(f"Early exit with perturbation_score={candidate.perturbation_score}")
                     return candidates, candidate
                 break
+
+    best_on_deadline = _pick_best_candidate(candidates)
+    if deadline is not None and deadline.expired() and best_on_deadline is not None:
+        logger.info(
+            f"Attack deadline in candidate search: returning best score={best_on_deadline.perturbation_score:.6f}"
+        )
+        return candidates, best_on_deadline
     return candidates, None
 
 
@@ -516,8 +755,22 @@ def run_quality_linf_attack(
     challenge_epsilon: float,
     min_delta: float,
     max_linf_delta: float = DEFAULT_MAX_LINF_DELTA,
+    timeout_seconds: float | None = None,
+    device: torch.device | None = None,
 ) -> tuple[torch.Tensor, int, float, float]:
     attack_started = time.perf_counter()
+    resolved_device = device if device is not None else clean.device
+    deadline = AttackDeadline.for_device(
+        timeout_seconds=float(timeout_seconds or os.getenv("PERTURB_MINER_TIMEOUT_SECONDS", "60")),
+        device=resolved_device,
+    )
+    if deadline.enabled:
+        logger.info(
+            f"CUDA attack deadline enabled: budget_ms={deadline.remaining_ms():.0f} "
+            f"post_reserve_ms={_post_reserve_ms():.0f}"
+        )
+
+    all_candidates: list[AttackCandidate] = []
     effective_max = min(challenge_epsilon, max_linf_delta)
     ladder = _epsilon_ladder(challenge_epsilon, min_delta, max_linf_delta)
     target_k = int(os.getenv("PERTURB_MINER_TOP_K", "5"))
@@ -537,6 +790,7 @@ def run_quality_linf_attack(
         epsilon=effective_max,
         min_delta=min_delta,
         use_rmse_probe=False,
+        deadline=deadline,
     )[: max(1, target_count)]
 
     candidates, early = _collect_attack_candidates(
@@ -551,12 +805,17 @@ def run_quality_linf_attack(
         restarts=restarts,
         bs_iterations=bs_iterations,
         early_exit_score=early_exit_score,
+        deadline=deadline,
     )
+    all_candidates.extend(candidates)
     if early is not None:
-        return early.adv, early.pred_index, early.linf, early.perturbation_score
+        return _result_from_candidate(early)
+    timed_out = _deadline_return_best(deadline, all_candidates, "after_fast_pass")
+    if timed_out is not None:
+        return timed_out
 
     # Fallback: RMSE-probed targets when fast pass found nothing.
-    if not candidates:
+    if not all_candidates and not (deadline.enabled and deadline.expired()):
         logger.info("Fast pass found no candidates; ranking targets with RMSE probe")
         probe_targets = ranked_attack_targets(
             model=model,
@@ -566,6 +825,7 @@ def run_quality_linf_attack(
             epsilon=effective_max,
             min_delta=min_delta,
             use_rmse_probe=True,
+            deadline=deadline,
         )[: max(1, target_count)]
         probe_candidates, probe_early = _collect_attack_candidates(
             model=model,
@@ -579,13 +839,24 @@ def run_quality_linf_attack(
             restarts=restarts,
             bs_iterations=bs_iterations,
             early_exit_score=early_exit_score,
+            deadline=deadline,
         )
+        all_candidates.extend(probe_candidates)
         if probe_early is not None:
-            return probe_early.adv, probe_early.pred_index, probe_early.linf, probe_early.perturbation_score
-        candidates.extend(probe_candidates)
+            return _result_from_candidate(probe_early)
+        timed_out = _deadline_return_best(deadline, all_candidates, "after_rmse_probe")
+        if timed_out is not None:
+            return timed_out
 
-    logger.info(f"Found {len(candidates)} candidates")
-    if not candidates:
+    logger.info(f"Found {len(all_candidates)} candidates")
+    timed_out = _deadline_return_best(deadline, all_candidates, "before_fallback")
+    if timed_out is not None:
+        return timed_out
+
+    if not all_candidates:
+        if deadline.enabled and deadline.expired():
+            logger.info("Attack deadline with no valid candidate; returning clean image")
+            return clean.clone(), source_index, 0.0, 0.0
         logger.info(f"No candidates found, using APGD-Linf with epsilon={effective_max}")
         adv = targeted_apgd_linf(
             model=model,
@@ -599,23 +870,23 @@ def run_quality_linf_attack(
         )
         adv = project_linf(clean, adv, effective_max)
         pred = predict_index(model=model, image_chw=adv)
-        logger.info(f"No candidates found, using APGD-Linf with epsilon={effective_max}")
         return adv, pred, linf_norm(clean, adv), 0.0
 
-    best = max(
-        candidates,
-        key=lambda c: (c.perturbation_score, -c.linf, -c.rmse),
-    )
+    best = _pick_best_candidate(all_candidates)
+    assert best is not None
 
     score_floor, rmse_ceiling = _hard_retry_thresholds()
     elapsed_ms = (time.perf_counter() - attack_started) * 1000.0
     retry_budget_ms = _hard_retry_budget_ms()
     needs_hard_retry = best.perturbation_score < score_floor or best.rmse > rmse_ceiling
+    deadline_blocks_retry = deadline.enabled and deadline.expired()
 
     if needs_hard_retry and elapsed_ms >= retry_budget_ms:
         logger.info(
             f"Skipping hard-image retry: elapsed_ms={elapsed_ms:.0f} >= budget_ms={retry_budget_ms:.0f}"
         )
+    elif needs_hard_retry and deadline_blocks_retry:
+        logger.info("Skipping hard-image retry: CUDA attack deadline reached")
     elif needs_hard_retry:
         logger.info(
             f"Hard-image retry: score={best.perturbation_score:.6f} rmse={best.rmse:.6f} "
@@ -629,6 +900,7 @@ def run_quality_linf_attack(
             epsilon=effective_max,
             min_delta=min_delta,
             use_rmse_probe=True,
+            deadline=deadline,
         )[: max(1, target_count + 2)]
         retry_steps = int(os.getenv("PERTURB_MINER_HARD_RETRY_APGD_STEPS", "60"))
         retry_restarts = max(restarts, int(os.getenv("PERTURB_MINER_HARD_RETRY_RESTARTS", "2")))
@@ -645,18 +917,20 @@ def run_quality_linf_attack(
             restarts=retry_restarts,
             bs_iterations=retry_bs,
             early_exit_score=early_exit_score,
+            deadline=deadline,
         )
+        all_candidates.extend(retry_candidates)
         if retry_early is not None:
-            return retry_early.adv, retry_early.pred_index, retry_early.linf, retry_early.perturbation_score
-        if retry_candidates:
-            retry_best = max(
-                retry_candidates,
-                key=lambda c: (c.perturbation_score, -c.linf, -c.rmse),
-            )
-            if retry_best.perturbation_score > best.perturbation_score:
-                best = retry_best
+            return _result_from_candidate(retry_early)
+        retry_best = _pick_best_candidate(retry_candidates)
+        if retry_best is not None and retry_best.perturbation_score > best.perturbation_score:
+            best = retry_best
 
-    return best.adv, best.pred_index, best.linf, best.perturbation_score
+    timed_out = _deadline_return_best(deadline, all_candidates, "final")
+    if timed_out is not None:
+        return timed_out
+
+    return _result_from_candidate(best)
 
 
 def apply_png_safe_shrink(
