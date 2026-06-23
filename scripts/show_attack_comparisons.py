@@ -12,11 +12,12 @@ from PIL import Image, ImageDraw, ImageFont
 from neurons.miner import PerturbMiner
 from perturbnet.image_io import decode_image_b64, encode_image_b64
 from perturbnet.model import LABELS, load_efficientnet_v2_l, predict_index, predict_label
+from perturbnet.constants import VALIDATION_IMAGES_RELATIVE_DIR
 from perturbnet.protocol import AttackChallenge
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_IMAGE_DIRS = (
-    PROJECT_ROOT / "assets" / "test_images",
+    PROJECT_ROOT / VALIDATION_IMAGES_RELATIVE_DIR,
     PROJECT_ROOT / "assets",
 )
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}

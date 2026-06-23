@@ -1,0 +1,60 @@
+{
+  "device": "cuda",
+  "epsilon": 0.03,
+  "min_delta": 0.003,
+  "timeout_seconds": 15,
+  "total": 1,
+  "passed": 1,
+  "summary": {
+    "perturbation_score_mean": 0.9476425175703823,
+    "perturbation_score_std": 0.0,
+    "perturbation_score_min": 0.9476425175703823,
+    "perturbation_score_max": 0.9476425175703823
+  },
+  "results": [
+    {
+      "image": "005_saluki.jpg",
+      "passed": true,
+      "shape": [
+        3,
+        160,
+        239
+      ],
+      "true_label": "saluki",
+      "new_label": "borzoi",
+      "epsilon": 0.03,
+      "min_delta": 0.003,
+      "effective_max_delta": 0.03,
+      "elapsed_ms": 11915,
+      "timeout_seconds": 15,
+      "linf_norm": 0.003921598196029663,
+      "rmse": 0.0002705431543290615,
+      "ssim": 0.999997079372406,
+      "psnr_db": 71.35526867575022,
+      "perturbation_score": 0.9476425175703823,
+      "changed_image": true,
+      "error": null
+    }
+  ],
+  "time_config": {
+    "timeout_seconds": 15.0,
+    "post_reserve_ms": 2500.0,
+    "attack_budget_ms": 12500.0,
+    "cuda_deadline_enabled": true,
+    "env": {
+      "PERTURB_MINER_POST_RESERVE_MS": "2500"
+    }
+  },
+  "timeout_summary": {
+    "within_timeout": 1,
+    "over_timeout": 0,
+    "within_timeout_pct": 100.0,
+    "elapsed_ms_mean": 11915.0,
+    "elapsed_ms_median": 11915.0,
+    "elapsed_ms_max": 11915.0,
+    "elapsed_ms_p95": 11915.0,
+    "speed_score_mean": 0.20566666666666666,
+    "speed_score_mean_passed": 0.20566666666666666,
+    "attack_budget_exceeded": 0
+  }
+}

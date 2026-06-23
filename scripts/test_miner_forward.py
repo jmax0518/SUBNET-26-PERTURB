@@ -27,10 +27,11 @@ from perturbnet.attack import (
 )
 from perturbnet.image_io import decode_image_b64, encode_image_b64
 from perturbnet.model import load_efficientnet_v2_l, predict_index, predict_label
+from perturbnet.constants import VALIDATION_IMAGES_RELATIVE_DIR
 from perturbnet.protocol import AttackChallenge
 
 DEFAULT_IMAGE_DIRS = (
-    PROJECT_ROOT / "assets" / "test_images",
+    PROJECT_ROOT / VALIDATION_IMAGES_RELATIVE_DIR,
     PROJECT_ROOT / "assets",
 )
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".gif", ".bmp"}
@@ -104,7 +105,7 @@ def list_available_images(image_path: str | None, image_dir: str | None) -> int:
     images = discover_images(image_path=image_path, image_dir=image_dir)
     if not images:
         print("No images found.")
-        print("Add files under assets/test_images/ or pass --image-path / --image-dir")
+        print(f"Add files under {VALIDATION_IMAGES_RELATIVE_DIR}/ or pass --image-path / --image-dir")
         return 1
 
     print(f"Found {len(images)} image(s):")
@@ -287,7 +288,7 @@ async def run_forward_tests(
     images = discover_images(image_path=image_path, image_dir=image_dir)
     if not images:
         print("No images found.")
-        print("Put files in assets/test_images/ or use --image-path / --image-dir")
+        print(f"Put files in {VALIDATION_IMAGES_RELATIVE_DIR}/ or use --image-path / --image-dir")
         return 1
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -374,7 +375,7 @@ def main() -> int:
         "--image-dir",
         type=str,
         default="",
-        help="Run on all images in a directory (default: assets/test_images and assets/)",
+        help=f"Run on all images in a directory (default: {VALIDATION_IMAGES_RELATIVE_DIR} and assets/)",
     )
     parser.add_argument("--list-images", action="store_true", help="List discovered image files and exit")
     parser.add_argument("--epsilon", type=float, default=0.03, help="Linf epsilon bound (default: 0.03)")

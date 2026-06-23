@@ -66,6 +66,10 @@ PROMPTS = (
 VALIDATOR_STATE_FILENAME = "perturb_validator_state.json"
 FALLBACK_IMAGE_RELATIVE_PATH = "assets/dog_1.jpg"
 FALLBACK_LABEL = "dog"
+VALIDATION_IMAGES_RELATIVE_DIR = "assets/validation_images"
+VALIDATION_IMAGE_COUNT = 100
+IMAGENET100_HF_DATASET = "clane9/imagenet-100"
+IMAGENET100_MANIFEST_FILENAME = "imagenet100_manifest.json"
 
 # Validator runtime constants.
 IMAGE_ENDPOINT = os.getenv("PERTURB_IMAGE_ENDPOINT", "https://api.pexels.com/v1/search")

@@ -1,0 +1,802 @@
+[
+  {
+    "filename": "000_bonnet.jpg",
+    "label": 0,
+    "class_name": "bonnet, poke bonnet",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "001_green_mamba.jpg",
+    "label": 1,
+    "class_name": "green mamba",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "002_langur.jpg",
+    "label": 2,
+    "class_name": "langur",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "003_doberman.jpg",
+    "label": 3,
+    "class_name": "Doberman, Doberman pinscher",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "004_gyromitra.jpg",
+    "label": 4,
+    "class_name": "gyromitra",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "005_saluki.jpg",
+    "label": 5,
+    "class_name": "Saluki, gazelle hound",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "006_vacuum.jpg",
+    "label": 6,
+    "class_name": "vacuum, vacuum cleaner",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "007_window_screen.jpg",
+    "label": 7,
+    "class_name": "window screen",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "008_cocktail_shaker.jpg",
+    "label": 8,
+    "class_name": "cocktail shaker",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "009_garden_spider.jpg",
+    "label": 9,
+    "class_name": "garden spider, Aranea diademata",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "010_garter_snake.jpg",
+    "label": 10,
+    "class_name": "garter snake, grass snake",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "011_carbonara.jpg",
+    "label": 11,
+    "class_name": "carbonara",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "012_pineapple.jpg",
+    "label": 12,
+    "class_name": "pineapple, ananas",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "013_computer_keyboard.jpg",
+    "label": 13,
+    "class_name": "computer keyboard, keypad",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "014_tripod.jpg",
+    "label": 14,
+    "class_name": "tripod",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "015_komondor.jpg",
+    "label": 15,
+    "class_name": "komondor",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "016_american_lobster.jpg",
+    "label": 16,
+    "class_name": "American lobster, Northern lobster, Maine lobster, Homarus americanus",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "017_bannister.jpg",
+    "label": 17,
+    "class_name": "bannister, banister, balustrade, balusters, handrail",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "018_honeycomb.jpg",
+    "label": 18,
+    "class_name": "honeycomb",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "019_tile_roof.jpg",
+    "label": 19,
+    "class_name": "tile roof",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "020_papillon.jpg",
+    "label": 20,
+    "class_name": "papillon",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "021_boathouse.jpg",
+    "label": 21,
+    "class_name": "boathouse",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "022_stinkhorn.jpg",
+    "label": 22,
+    "class_name": "stinkhorn, carrion fungus",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "023_jean.jpg",
+    "label": 23,
+    "class_name": "jean, blue jean, denim",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "024_chihuahua.jpg",
+    "label": 24,
+    "class_name": "Chihuahua",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "025_chesapeake_bay_retriever.jpg",
+    "label": 25,
+    "class_name": "Chesapeake Bay retriever",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "026_robin.jpg",
+    "label": 26,
+    "class_name": "robin, American robin, Turdus migratorius",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "027_tub.jpg",
+    "label": 27,
+    "class_name": "tub, vat",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "028_great_dane.jpg",
+    "label": 28,
+    "class_name": "Great Dane",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "029_rotisserie.jpg",
+    "label": 29,
+    "class_name": "rotisserie",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "030_bottlecap.jpg",
+    "label": 30,
+    "class_name": "bottlecap",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "031_throne.jpg",
+    "label": 31,
+    "class_name": "throne",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "032_little_blue_heron.jpg",
+    "label": 32,
+    "class_name": "little blue heron, Egretta caerulea",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "033_rock_crab.jpg",
+    "label": 33,
+    "class_name": "rock crab, Cancer irroratus",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "034_rottweiler.jpg",
+    "label": 34,
+    "class_name": "Rottweiler",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "035_lorikeet.jpg",
+    "label": 35,
+    "class_name": "lorikeet",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "036_gila_monster.jpg",
+    "label": 36,
+    "class_name": "Gila monster, Heloderma suspectum",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "037_head_cabbage.jpg",
+    "label": 37,
+    "class_name": "head cabbage",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "038_car_wheel.jpg",
+    "label": 38,
+    "class_name": "car wheel",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "039_coyote.jpg",
+    "label": 39,
+    "class_name": "coyote, prairie wolf, brush wolf, Canis latrans",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "040_moped.jpg",
+    "label": 40,
+    "class_name": "moped",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "041_milk_can.jpg",
+    "label": 41,
+    "class_name": "milk can",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "042_mixing_bowl.jpg",
+    "label": 42,
+    "class_name": "mixing bowl",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "043_toy_terrier.jpg",
+    "label": 43,
+    "class_name": "toy terrier",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "044_chocolate_sauce.jpg",
+    "label": 44,
+    "class_name": "chocolate sauce, chocolate syrup",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "045_rocking_chair.jpg",
+    "label": 45,
+    "class_name": "rocking chair, rocker",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "046_wing.jpg",
+    "label": 46,
+    "class_name": "wing",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "047_park_bench.jpg",
+    "label": 47,
+    "class_name": "park bench",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "048_ambulance.jpg",
+    "label": 48,
+    "class_name": "ambulance",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "049_football_helmet.jpg",
+    "label": 49,
+    "class_name": "football helmet",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "050_leafhopper.jpg",
+    "label": 50,
+    "class_name": "leafhopper",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "051_cauliflower.jpg",
+    "label": 51,
+    "class_name": "cauliflower",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "052_pirate.jpg",
+    "label": 52,
+    "class_name": "pirate, pirate ship",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "053_purse.jpg",
+    "label": 53,
+    "class_name": "purse",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "054_hare.jpg",
+    "label": 54,
+    "class_name": "hare",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "055_lampshade.jpg",
+    "label": 55,
+    "class_name": "lampshade, lamp shade",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "056_fiddler_crab.jpg",
+    "label": 56,
+    "class_name": "fiddler crab",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "057_standard_poodle.jpg",
+    "label": 57,
+    "class_name": "standard poodle",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "058_shih_tzu.jpg",
+    "label": 58,
+    "class_name": "Shih-Tzu",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "059_pedestal.jpg",
+    "label": 59,
+    "class_name": "pedestal, plinth, footstall",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "060_gibbon.jpg",
+    "label": 60,
+    "class_name": "gibbon, Hylobates lar",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "061_safety_pin.jpg",
+    "label": 61,
+    "class_name": "safety pin",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "062_english_foxhound.jpg",
+    "label": 62,
+    "class_name": "English foxhound",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "063_chime.jpg",
+    "label": 63,
+    "class_name": "chime, bell, gong",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "064_american_staffordshire_terrier.jpg",
+    "label": 64,
+    "class_name": "American Staffordshire terrier, Staffordshire terrier, American pit bull terrier, pit bull terrier",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "065_bassinet.jpg",
+    "label": 65,
+    "class_name": "bassinet",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "066_wild_boar.jpg",
+    "label": 66,
+    "class_name": "wild boar, boar, Sus scrofa",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "067_theater_curtain.jpg",
+    "label": 67,
+    "class_name": "theater curtain, theatre curtain",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "068_dung_beetle.jpg",
+    "label": 68,
+    "class_name": "dung beetle",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "069_hognose_snake.jpg",
+    "label": 69,
+    "class_name": "hognose snake, puff adder, sand viper",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "070_mexican_hairless.jpg",
+    "label": 70,
+    "class_name": "Mexican hairless",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "071_mortarboard.jpg",
+    "label": 71,
+    "class_name": "mortarboard",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "072_walker_hound.jpg",
+    "label": 72,
+    "class_name": "Walker hound, Walker foxhound",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "073_red_fox.jpg",
+    "label": 73,
+    "class_name": "red fox, Vulpes vulpes",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "074_modem.jpg",
+    "label": 74,
+    "class_name": "modem",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "075_slide_rule.jpg",
+    "label": 75,
+    "class_name": "slide rule, slipstick",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "076_walking_stick.jpg",
+    "label": 76,
+    "class_name": "walking stick, walkingstick, stick insect",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "077_cinema.jpg",
+    "label": 77,
+    "class_name": "cinema, movie theater, movie theatre, movie house, picture palace",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "078_meerkat.jpg",
+    "label": 78,
+    "class_name": "meerkat, mierkat",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "079_kuvasz.jpg",
+    "label": 79,
+    "class_name": "kuvasz",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "080_obelisk.jpg",
+    "label": 80,
+    "class_name": "obelisk",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "081_harmonica.jpg",
+    "label": 81,
+    "class_name": "harmonica, mouth organ, harp, mouth harp",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "082_sarong.jpg",
+    "label": 82,
+    "class_name": "sarong",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "083_mousetrap.jpg",
+    "label": 83,
+    "class_name": "mousetrap",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "084_hard_disc.jpg",
+    "label": 84,
+    "class_name": "hard disc, hard disk, fixed disk",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "085_american_coot.jpg",
+    "label": 85,
+    "class_name": "American coot, marsh hen, mud hen, water hen, Fulica americana",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "086_reel.jpg",
+    "label": 86,
+    "class_name": "reel",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "087_pickup.jpg",
+    "label": 87,
+    "class_name": "pickup, pickup truck",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "088_iron.jpg",
+    "label": 88,
+    "class_name": "iron, smoothing iron",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "089_tabby.jpg",
+    "label": 89,
+    "class_name": "tabby, tabby cat",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "090_ski_mask.jpg",
+    "label": 90,
+    "class_name": "ski mask",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "091_vizsla.jpg",
+    "label": 91,
+    "class_name": "vizsla, Hungarian pointer",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "092_laptop.jpg",
+    "label": 92,
+    "class_name": "laptop, laptop computer",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "093_stretcher.jpg",
+    "label": 93,
+    "class_name": "stretcher",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "094_dutch_oven.jpg",
+    "label": 94,
+    "class_name": "Dutch oven",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "095_african_hunting_dog.jpg",
+    "label": 95,
+    "class_name": "African hunting dog, hyena dog, Cape hunting dog, Lycaon pictus",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "096_boxer.jpg",
+    "label": 96,
+    "class_name": "boxer",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "097_gasmask.jpg",
+    "label": 97,
+    "class_name": "gasmask, respirator, gas helmet",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "098_goose.jpg",
+    "label": 98,
+    "class_name": "goose",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  },
+  {
+    "filename": "099_borzoi.jpg",
+    "label": 99,
+    "class_name": "borzoi, Russian wolfhound",
+    "split": "validation",
+    "dataset": "clane9/imagenet-100",
+    "image_index_in_class": 1
+  }
+]

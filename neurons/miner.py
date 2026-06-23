@@ -9,9 +9,9 @@ import torch
 
 from perturbnet.attack import (
     apply_png_safe_shrink,
-    early_exit_score_threshold,
     linf_norm,
     run_quality_linf_attack,
+    should_skip_png_refine,
 )
 from perturbnet.image_io import decode_image_b64, encode_image_b64
 from perturbnet.model import load_efficientnet_v2_l, resolve_target_index
@@ -171,16 +171,30 @@ class PerturbMiner:
 
         epsilon = float(synapse.epsilon)
         min_delta = float(getattr(synapse, "min_delta", 0.002))
-        logger.info(f"Running run_quality_linf_attack with epsilon={epsilon} and min_delta={min_delta}")
-        adv, final_pred, best_delta, quality_score = run_quality_linf_attack(
+        timeout_seconds = float(getattr(synapse, "timeout_seconds", 60) or 60)
+        forward_started = time.perf_counter()
+        print(f"Running run_quality_linf_attack with epsilon={epsilon} min_delta={min_delta} timeout_seconds={timeout_seconds}", flush=True)
+        adv, final_pred, best_delta, quality_score, quality_rmse = run_quality_linf_attack(
             model=self.model,
             clean=clean,
             source_index=target_index,
             challenge_epsilon=epsilon,
             min_delta=min_delta,
+            timeout_seconds=timeout_seconds,
+            device=self.device,
         )
-        logger.info(f"run_quality_linf_attack returned adv with norm={linf_norm(clean, adv)}")
-        logger.info(f"Running apply_png_safe_shrink with quality_score={quality_score}")
+        print(f"run_quality_linf_attack returned adv with norm={linf_norm(clean, adv)} quality_score={quality_score:.6f} quality_rmse={quality_rmse:.6f}", flush=True)
+        elapsed_ms = (time.perf_counter() - forward_started) * 1000.0
+        post_reserve_ms = float(os.getenv("PERTURB_MINER_POST_RESERVE_MS", "2500"))
+        cuda_post_rush = (
+            self.device.type == "cuda"
+            # and elapsed_ms >= timeout_seconds * 1000.0 - post_reserve_ms
+        )
+        # skip_refine = should_skip_png_refine(quality_score, quality_rmse, cuda_post_rush)
+        skip_refine = False
+        if cuda_post_rush:
+            print(f"Skipping PNG refine: elapsed_ms={elapsed_ms:.0f} timeout_budget_ms={timeout_seconds * 1000.0:.0f}", flush=True)
+        print(f"Running apply_png_safe_shrink with quality_score={quality_score:.6f} quality_rmse={quality_rmse:.6f} skip_refine={skip_refine}", flush=True)
         adv, final_pred, best_delta = apply_png_safe_shrink(
             model=self.model,
             clean=clean,
@@ -190,15 +204,11 @@ class PerturbMiner:
             min_delta=min_delta,
             effective_max_delta=min(epsilon, 0.03),
             target_index=final_pred,
-            skip_refine=quality_score >= early_exit_score_threshold(),
+            skip_refine=skip_refine,
         )
 
         synapse.perturbed_image_b64 = encode_image_b64(adv)
-        logger.info(
-            f"Finished task={getattr(synapse, 'task_id', 'unknown')} target_idx={target_index} "
-            f"final_pred={final_pred} best_delta={best_delta:.6f} min_delta={min_delta:.6f} "
-            f"quality_score={quality_score:.6f}"
-        )
+        print(f"Finished task={getattr(synapse, 'task_id', 'unknown')} target_idx={target_index} final_pred={final_pred} best_delta={best_delta:.6f} min_delta={min_delta:.6f} quality_score={quality_score:.6f} quality_rmse={quality_rmse:.6f}", flush=True)
         return synapse
 
     async def blacklist(self, synapse: AttackChallenge) -> typing.Tuple[bool, str]:

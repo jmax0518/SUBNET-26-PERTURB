@@ -1,0 +1,48 @@
+device=cpu
+testing 100 image(s)
+Loading EfficientNetV2-L...
+Model ready.
+
+=== airplane_01.jpg ===
+shape=(3, 334, 500) true_label='airliner' epsilon=0.03 min_delta=0.003 effective_max_delta=0.03
+Running miner.forward()...
+elapsed_ms=13537 timeout_seconds=15
+new_label='wing' linf_norm=0.011765 changed_image=True
+validator_gates=PASS linf=0.011765 rmse=0.007363 ssim=0.9817 psnr_db=42.66 perturbation_score=0.490101
+PASS
+
+=== airplane_02.jpg ===
+shape=(3, 332, 500) true_label='airliner' epsilon=0.03 min_delta=0.003 effective_max_delta=0.03
+Running miner.forward()...
+elapsed_ms=13497 timeout_seconds=15
+new_label='wing' linf_norm=0.007843 changed_image=True
+validator_gates=PASS linf=0.007843 rmse=0.004939 ssim=0.9805 psnr_db=46.13 perturbation_score=0.680745
+PASS
+
+=== backpack_01.jpg ===
+shape=(3, 667, 500) true_label='crutch' epsilon=0.03 min_delta=0.003 effective_max_delta=0.03
+Running miner.forward()...
+elapsed_ms=13288 timeout_seconds=15
+new_label='backpack' linf_norm=0.003922 changed_image=True
+validator_gates=PASS linf=0.003922 rmse=0.002479 ssim=0.9966 psnr_db=52.11 perturbation_score=0.905493
+PASS
+
+=== banana.jpg ===
+shape=(3, 375, 500) true_label='banana' epsilon=0.03 min_delta=0.003 effective_max_delta=0.03
+Running miner.forward()...
+elapsed_ms=13585 timeout_seconds=15
+new_label='titi' linf_norm=0.015686 changed_image=True
+validator_gates=PASS linf=0.015686 rmse=0.009864 ssim=0.9816 psnr_db=40.12 perturbation_score=0.331886
+PASS
+
+=== banana_02.jpg ===
+shape=(3, 375, 500) true_label='banana' epsilon=0.03 min_delta=0.003 effective_max_delta=0.03
+Running miner.forward()...
+elapsed_ms=13438 timeout_seconds=15
+new_label='titi' linf_norm=0.015686 changed_image=True
+validator_gates=PASS linf=0.015686 rmse=0.009864 ssim=0.9816 psnr_db=40.12 perturbation_score=0.331886
+PASS
+
+=== baseball_bat_01.jpg ===
+shape=(3, 338, 500) true_label='ballplayer' epsilon=0.03 min_delta=0.003 effective_max_delta=0.03
+Running miner.forward()...
