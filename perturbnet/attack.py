@@ -226,6 +226,93 @@ def pixel_mask_from_importance(pixel_importance: torch.Tensor, keep_ratio: float
     return (pixel_importance >= threshold).float()
 
 
+def _refine_keep_ratios() -> tuple[float, ...]:
+    raw = os.getenv("PERTURB_MINER_REFINE_KEEP_RATIOS", "").strip()
+    if raw:
+        return tuple(float(part) for part in raw.split(",") if part.strip())
+    return (1.0, 0.85, 0.7, 0.55, 0.45, 0.35, 0.25, 0.15, 0.10, 0.05, 0.02, 0.01)
+
+
+def _greedy_prune_keep_ratios() -> tuple[float, ...]:
+    raw = os.getenv("PERTURB_MINER_GREEDY_PRUNE_KEEP_RATIOS", "").strip()
+    if raw:
+        return tuple(float(part) for part in raw.split(",") if part.strip())
+    return (0.50, 0.35, 0.25, 0.15, 0.10, 0.05, 0.02)
+
+
+def _perturbed_pixel_mask(delta: torch.Tensor) -> torch.Tensor:
+    return (delta.abs().amax(dim=0) > 1e-8).float()
+
+
+def _pixel_mask_keep_perturbed_top(
+    pixel_importance: torch.Tensor,
+    perturbed_pixels: torch.Tensor,
+    keep_ratio: float,
+) -> torch.Tensor:
+    flat_imp = pixel_importance.reshape(-1)
+    flat_pert = perturbed_pixels.reshape(-1)
+    perturbed_idx = torch.nonzero(flat_pert > 0.5, as_tuple=False).squeeze(-1)
+    if perturbed_idx.numel() == 0:
+        return perturbed_pixels
+    k = max(1, int(perturbed_idx.numel() * keep_ratio))
+    imp_at_perturbed = flat_imp[perturbed_idx]
+    top_local = torch.topk(
+        imp_at_perturbed,
+        k=min(k, int(perturbed_idx.numel())),
+        largest=True,
+    ).indices
+    kept_global = perturbed_idx[top_local]
+    mask = torch.zeros_like(flat_imp)
+    mask[kept_global] = 1.0
+    return mask.reshape(pixel_importance.shape)
+
+
+def _refine_masked_candidate(
+    model: torch.nn.Module,
+    clean: torch.Tensor,
+    delta: torch.Tensor,
+    pixel_mask: torch.Tensor | None,
+    source_index: int,
+    epsilon: float,
+    min_delta: float,
+    effective_max_delta: float,
+    bs_iterations: int,
+) -> AttackCandidate | None:
+    if pixel_mask is None:
+        masked = delta
+    else:
+        masked = delta * _broadcast_pixel_mask(pixel_mask, delta)
+    candidate_adv = project_linf(clean, clean + masked, epsilon)
+    candidate_adv = binary_search_min_linf(
+        model=model,
+        clean=clean,
+        adv=candidate_adv,
+        source_index=source_index,
+        min_delta=min_delta,
+        epsilon=epsilon,
+        iterations=bs_iterations,
+    )
+    return evaluate_candidate(
+        clean=clean,
+        adv=candidate_adv,
+        source_index=source_index,
+        min_delta=min_delta,
+        effective_max_delta=effective_max_delta,
+        model=model,
+        use_png=True,
+    )
+
+
+def _apply_refinement_candidate(
+    best: torch.Tensor,
+    best_score: float,
+    scored: AttackCandidate | None,
+) -> tuple[torch.Tensor, float]:
+    if scored is not None and scored.perturbation_score > best_score:
+        return scored.adv, scored.perturbation_score
+    return best, best_score
+
+
 def _dilate_pixel_mask(pixel_mask: torch.Tensor, radius: int) -> torch.Tensor:
     if radius <= 0:
         return pixel_mask
@@ -548,38 +635,95 @@ def refine_high_gradient_mask(
         targeted=target_index is not None,
     )
 
-    keep_ratios = (1.0, 0.85, 0.7, 0.55, 0.45, 0.35, 0.25)
-    for keep_ratio in keep_ratios:
-        if keep_ratio >= 1.0:
-            masked = delta
-        else:
-            pixel_mask = pixel_mask_from_importance(pixel_importance, keep_ratio)
-            masked = delta * _broadcast_pixel_mask(pixel_mask, delta)
-
-        candidate_adv = project_linf(clean, clean + masked, epsilon)
-        candidate_adv = binary_search_min_linf(
+    for keep_ratio in _refine_keep_ratios():
+        pixel_mask = None if keep_ratio >= 1.0 else pixel_mask_from_importance(pixel_importance, keep_ratio)
+        scored = _refine_masked_candidate(
             model=model,
             clean=clean,
-            adv=candidate_adv,
+            delta=delta,
+            pixel_mask=pixel_mask,
             source_index=source_index,
-            min_delta=min_delta,
             epsilon=epsilon,
-            iterations=bs_iterations,
-        )
-        scored = evaluate_candidate(
-            clean=clean,
-            adv=candidate_adv,
-            source_index=source_index,
             min_delta=min_delta,
             effective_max_delta=effective_max_delta,
-            model=model,
-            use_png=True,
+            bs_iterations=bs_iterations,
         )
-        if scored is not None and scored.perturbation_score > best_score:
-            best = scored.adv
-            best_score = scored.perturbation_score
+        best, best_score = _apply_refinement_candidate(best, best_score, scored)
+
+    if os.getenv("PERTURB_MINER_GREEDY_PRUNE", "1").strip().lower() not in {"0", "false", "no", "off"}:
+        best, _ = _greedy_prune_perturbed_pixels(
+            model=model,
+            clean=clean,
+            adv=best,
+            source_index=source_index,
+            target_index=target_index,
+            epsilon=epsilon,
+            min_delta=min_delta,
+            effective_max_delta=effective_max_delta,
+            bs_iterations=bs_iterations,
+            initial_score=best_score,
+        )
 
     return best
+
+
+def _greedy_prune_perturbed_pixels(
+    model: torch.nn.Module,
+    clean: torch.Tensor,
+    adv: torch.Tensor,
+    source_index: int,
+    target_index: int | None,
+    epsilon: float,
+    min_delta: float,
+    effective_max_delta: float,
+    bs_iterations: int,
+    initial_score: float,
+) -> tuple[torch.Tensor, float]:
+    """Drop low-importance perturbed pixels until the flip breaks, keeping the sparsest valid result."""
+    best = adv
+    best_score = initial_score
+    delta = best - clean
+    perturbed_pixels = _perturbed_pixel_mask(delta)
+    if float(perturbed_pixels.sum().item()) <= 1.0:
+        return best, best_score
+
+    pixel_importance = compute_pixel_importance(
+        model=model,
+        image=best,
+        source_index=source_index,
+        target_index=target_index,
+        targeted=target_index is not None,
+    )
+
+    for keep_ratio in _greedy_prune_keep_ratios():
+        pixel_mask = _pixel_mask_keep_perturbed_top(pixel_importance, perturbed_pixels, keep_ratio)
+        scored = _refine_masked_candidate(
+            model=model,
+            clean=clean,
+            delta=delta,
+            pixel_mask=pixel_mask,
+            source_index=source_index,
+            epsilon=epsilon,
+            min_delta=min_delta,
+            effective_max_delta=effective_max_delta,
+            bs_iterations=bs_iterations,
+        )
+        if scored is None:
+            break
+        prev_score = best_score
+        best, best_score = _apply_refinement_candidate(best, best_score, scored)
+        if best_score > prev_score:
+            delta = best - clean
+            perturbed_pixels = _perturbed_pixel_mask(delta)
+            pixel_importance = compute_pixel_importance(
+                model=model,
+                image=best,
+                source_index=source_index,
+                target_index=target_index,
+                targeted=target_index is not None,
+            )
+
+    return best, best_score
 
 
 def evaluate_candidate(

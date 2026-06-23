@@ -6,11 +6,11 @@ Setup (once):
     modal setup
 
 Usage:
-    modal run run_gpu.py                          # full test_images benchmark (60s timeout)
+    modal run run_gpu.py                          # full validation_images benchmark (60s timeout)
     modal run run_gpu.py --no-benchmark           # single default image
-    modal run run_gpu.py --image-path assets/test_images/tiger_01.jpg
+    modal run run_gpu.py --image-path assets/validation_images/000_bonnet.jpg
     modal run run_gpu.py --timeout-seconds 45 --post-reserve-ms 2000
-    modal run run_gpu.py --image-dir assets/test_images --json-out assets/analysis/gpu_run.json
+    modal run run_gpu.py --image-dir assets/validation_images --json-out assets/analysis/gpu_run.json
     modal run run_gpu.py --list-images
 
 CUDA time limits (mirrors production miner):
@@ -237,7 +237,7 @@ def _print_benchmark_summary(payload: dict[str, Any]) -> None:
 @app.function(gpu="T4", timeout=3600)
 def run_forward_test(
     image_path: str = "",
-    image_dir: str = "assets/test_images",
+    image_dir: str = "assets/validation_images",
     epsilon: float = 0.03,
     min_delta: float = 0.003,
     timeout_seconds: int = DEFAULT_TIMEOUT_SECONDS,
@@ -301,7 +301,7 @@ def main(
 ) -> None:
     if benchmark and not list_images:
         if not image_path.strip() and not image_dir.strip():
-            image_dir = "assets/test_images"
+            image_dir = "assets/validation_images"
         timeout_seconds = max(int(timeout_seconds), DEFAULT_TIMEOUT_SECONDS)
 
     payload = run_forward_test.remote(
