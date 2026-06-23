@@ -85,15 +85,24 @@ def _pick_best_candidate(candidates: list[AttackCandidate]) -> AttackCandidate |
     return max(candidates, key=_candidate_sort_key)
 
 
-def _result_from_candidate(candidate: AttackCandidate) -> tuple[torch.Tensor, int, float, float]:
-    return candidate.adv, candidate.pred_index, candidate.linf, candidate.perturbation_score
+AttackResult = tuple[torch.Tensor, int, float, float, float]
+
+
+def _result_from_candidate(candidate: AttackCandidate) -> AttackResult:
+    return (
+        candidate.adv,
+        candidate.pred_index,
+        candidate.linf,
+        candidate.perturbation_score,
+        candidate.rmse,
+    )
 
 
 def _deadline_return_best(
     deadline: AttackDeadline | None,
     candidates: list[AttackCandidate],
     phase: str,
-) -> tuple[torch.Tensor, int, float, float] | None:
+) -> AttackResult | None:
     if deadline is None or not deadline.expired():
         return None
     best = _pick_best_candidate(candidates)
@@ -146,11 +155,44 @@ def compute_psnr_db(x_clean: torch.Tensor, x_adv: torch.Tensor) -> float:
 
 
 def _early_exit_score_threshold() -> float:
-    return float(os.getenv("PERTURB_MINER_EARLY_EXIT_SCORE", "0.905"))
+    return float(os.getenv("PERTURB_MINER_EARLY_EXIT_SCORE", "0.945"))
 
 
 def early_exit_score_threshold() -> float:
     return _early_exit_score_threshold()
+
+
+def _early_exit_rmse_threshold() -> float:
+    return float(os.getenv("PERTURB_MINER_EARLY_EXIT_RMSE", "0.0005"))
+
+
+def early_exit_rmse_threshold() -> float:
+    return _early_exit_rmse_threshold()
+
+
+def _candidate_meets_early_exit(
+    candidate: AttackCandidate,
+    early_exit_score: float,
+    early_exit_rmse: float,
+) -> bool:
+    return (
+        candidate.perturbation_score >= early_exit_score
+        and candidate.rmse <= early_exit_rmse
+    )
+
+
+def should_skip_png_refine(quality_score: float, quality_rmse: float, cuda_post_rush: bool) -> bool:
+    if cuda_post_rush:
+        return True
+    return (
+        quality_score >= early_exit_score_threshold()
+        and quality_rmse <= early_exit_rmse_threshold()
+    )
+
+
+def _fast_pass_use_rmse_probe() -> bool:
+    raw = os.getenv("PERTURB_MINER_FAST_PASS_RMSE_PROBE", "1").strip().lower()
+    return raw not in {"0", "false", "no", "off"}
 
 
 def _hard_retry_budget_ms() -> float:
@@ -197,7 +239,7 @@ def _mask_expand_ratios(initial: float) -> tuple[float, ...]:
 
 
 def _mask_first_min_side() -> int:
-    return int(os.getenv("PERTURB_MINER_MASK_FIRST_MIN_SIDE", "480"))
+    return int(os.getenv("PERTURB_MINER_MASK_FIRST_MIN_SIDE", "128"))
 
 
 def compute_pixel_importance(
@@ -792,8 +834,8 @@ def _epsilon_ladder(challenge_epsilon: float, min_delta: float, max_linf_delta: 
 
 
 def _hard_retry_thresholds() -> tuple[float, float]:
-    score_floor = float(os.getenv("PERTURB_MINER_HARD_RETRY_SCORE", "0.895"))
-    rmse_ceiling = float(os.getenv("PERTURB_MINER_HARD_RETRY_RMSE", "0.003"))
+    score_floor = float(os.getenv("PERTURB_MINER_HARD_RETRY_SCORE", "0.94"))
+    rmse_ceiling = float(os.getenv("PERTURB_MINER_HARD_RETRY_RMSE", "0.0015"))
     return score_floor, rmse_ceiling
 
 
@@ -809,6 +851,7 @@ def _collect_attack_candidates(
     restarts: int,
     bs_iterations: int,
     early_exit_score: float,
+    early_exit_rmse: float,
     deadline: AttackDeadline | None = None,
 ) -> tuple[list[AttackCandidate], AttackCandidate | None]:
     candidates: list[AttackCandidate] = []
@@ -876,10 +919,16 @@ def _collect_attack_candidates(
                 use_png=True,
             )
             if candidate is not None:
-                logger.info(f"Evaluated candidate with perturbation_score={candidate.perturbation_score}")
+                logger.info(
+                    f"Evaluated candidate with perturbation_score={candidate.perturbation_score} "
+                    f"rmse={candidate.rmse:.6f}"
+                )
                 candidates.append(candidate)
-                if candidate.perturbation_score >= early_exit_score:
-                    logger.info(f"Early exit with perturbation_score={candidate.perturbation_score}")
+                if _candidate_meets_early_exit(candidate, early_exit_score, early_exit_rmse):
+                    logger.info(
+                        f"Early exit with perturbation_score={candidate.perturbation_score} "
+                        f"rmse={candidate.rmse:.6f}"
+                    )
                     return candidates, candidate
                 break
 
@@ -901,7 +950,7 @@ def run_quality_linf_attack(
     max_linf_delta: float = DEFAULT_MAX_LINF_DELTA,
     timeout_seconds: float | None = None,
     device: torch.device | None = None,
-) -> tuple[torch.Tensor, int, float, float]:
+) -> AttackResult:
     attack_started = time.perf_counter()
     resolved_device = device if device is not None else clean.device
     deadline = AttackDeadline.for_device(
@@ -920,12 +969,14 @@ def run_quality_linf_attack(
     target_k = int(os.getenv("PERTURB_MINER_TOP_K", "5"))
     target_count = int(os.getenv("PERTURB_MINER_TARGET_COUNT", "3"))
     early_exit_score = _early_exit_score_threshold()
+    early_exit_rmse = _early_exit_rmse_threshold()
 
     steps = _apgd_steps("search")
     restarts = _apgd_restarts()
     bs_iterations = int(os.getenv("PERTURB_MINER_BS_ITERATIONS", "14"))
 
-    # Fast pass: logit-margin targets only (no RMSE probes).
+    # Fast pass: RMSE-probed target ranking when enabled (default on).
+    use_rmse_probe = _fast_pass_use_rmse_probe()
     margin_targets = ranked_attack_targets(
         model=model,
         clean=clean,
@@ -933,7 +984,7 @@ def run_quality_linf_attack(
         k=target_k,
         epsilon=effective_max,
         min_delta=min_delta,
-        use_rmse_probe=False,
+        use_rmse_probe=use_rmse_probe,
         deadline=deadline,
     )[: max(1, target_count)]
 
@@ -949,6 +1000,7 @@ def run_quality_linf_attack(
         restarts=restarts,
         bs_iterations=bs_iterations,
         early_exit_score=early_exit_score,
+        early_exit_rmse=early_exit_rmse,
         deadline=deadline,
     )
     all_candidates.extend(candidates)
@@ -983,6 +1035,7 @@ def run_quality_linf_attack(
             restarts=restarts,
             bs_iterations=bs_iterations,
             early_exit_score=early_exit_score,
+            early_exit_rmse=early_exit_rmse,
             deadline=deadline,
         )
         all_candidates.extend(probe_candidates)
@@ -1000,7 +1053,7 @@ def run_quality_linf_attack(
     if not all_candidates:
         if deadline.enabled and deadline.expired():
             logger.info("Attack deadline with no valid candidate; returning clean image")
-            return clean.clone(), source_index, 0.0, 0.0
+            return clean.clone(), source_index, 0.0, 0.0, 0.0
         logger.info(f"No candidates found, using APGD-Linf with epsilon={effective_max}")
         adv = targeted_apgd_linf(
             model=model,
@@ -1014,7 +1067,7 @@ def run_quality_linf_attack(
         )
         adv = project_linf(clean, adv, effective_max)
         pred = predict_index(model=model, image_chw=adv)
-        return adv, pred, linf_norm(clean, adv), 0.0
+        return adv, pred, linf_norm(clean, adv), 0.0, rmse(clean, adv)
 
     best = _pick_best_candidate(all_candidates)
     assert best is not None
@@ -1061,6 +1114,7 @@ def run_quality_linf_attack(
             restarts=retry_restarts,
             bs_iterations=retry_bs,
             early_exit_score=early_exit_score,
+            early_exit_rmse=early_exit_rmse,
             deadline=deadline,
         )
         all_candidates.extend(retry_candidates)
