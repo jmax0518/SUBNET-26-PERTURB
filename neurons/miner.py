@@ -223,6 +223,30 @@ class PerturbMiner:
         slept = sleep_until_next_task_boundary(cadence_seconds=cadence)
         logger.info(f"Reached task boundary after waiting {slept:.2f}s")
 
+    def _snapshot_current_task_before_boundary(self) -> None:
+        cadence = int(getattr(self.config.perturb, "task_cadence_seconds", C.TASK_CADENCE_SECONDS))
+        prefetch_seconds = float(
+            getattr(self.config.perturb, "task_pre_boundary_fetch_seconds", C.TASK_PRE_BOUNDARY_FETCH_SECONDS)
+        )
+        now = time.time()
+        cadence = max(1, cadence)
+        prefetch_seconds = min(max(0.0, prefetch_seconds), float(cadence))
+        boundary = (int(now // cadence) + 1) * cadence
+        sleep_seconds = max(0.0, boundary - prefetch_seconds - now)
+        if sleep_seconds > 0.0:
+            time.sleep(sleep_seconds)
+        try:
+            task = get_current_task(
+                base_url=str(getattr(self.config.perturb, "api_base_url", C.PERTURB_API_BASE_URL)),
+                timeout_seconds=float(getattr(self.config.perturb, "api_timeout_seconds", C.PERTURB_API_TIMEOUT_SECONDS)),
+            )
+        except Exception as exc:
+            logger.warning(f"Pre-boundary task fetch failed: {exc}")
+            return
+        if task is not None:
+            self.last_processed_task_id = task.task_id
+            logger.info(f"Pre-boundary baseline task_id={self.last_processed_task_id}")
+
     def _fetch_new_task_at_boundary(self):
         retries = int(getattr(self.config.perturb, "task_fetch_retries", C.TASK_FETCH_RETRIES))
         retry_seconds = float(getattr(self.config.perturb, "task_fetch_retry_seconds", C.TASK_FETCH_RETRY_SECONDS))
@@ -241,30 +265,18 @@ class PerturbMiner:
     def run(self) -> None:
         self.sync()
         self._miner_uid()
-        try:
-            current_task = get_current_task(
-                base_url=str(getattr(self.config.perturb, "api_base_url", C.PERTURB_API_BASE_URL)),
-                timeout_seconds=float(
-                    getattr(self.config.perturb, "api_timeout_seconds", C.PERTURB_API_TIMEOUT_SECONDS)
-                ),
-            )
-        except Exception as exc:
-            logger.warning(f"Initial task fetch failed: {exc}")
-            current_task = None
-        self.last_processed_task_id = current_task.task_id if current_task is not None else ""
-        logger.info(f"Miner started. baseline_task_id={self.last_processed_task_id or '(none)'}")
+        logger.info("Miner started. Waiting for task boundaries.")
         while True:
             try:
+                self._snapshot_current_task_before_boundary()
                 self._wait_for_next_task_boundary()
                 task = self._fetch_new_task_at_boundary()
                 if task is None:
                     continue
 
                 logger.info(f"New task found task_id={task.task_id} image_url={task.image_url}")
-                try:
-                    self._process_task(task_id=task.task_id, image_url=task.image_url)
-                finally:
-                    self.last_processed_task_id = task.task_id
+
+                self._process_task(task_id=task.task_id, image_url=task.image_url)
             except Exception as exc:
                 logger.warning(f"Miner task loop failed: {exc}")
                 time.sleep(float(getattr(self.config.perturb, "task_poll_time", C.TASK_POLL_TIME)))
