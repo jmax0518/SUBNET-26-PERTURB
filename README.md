@@ -1,41 +1,47 @@
 # Perturb Subnet
 
-Perturb is a Bittensor subnet where validators create adversarial-image challenges and miners return perturbed images under bounded distortion constraints.
+Perturb is a decentralized adversarial robustness network built on Bittensor. Miners compete to find adversarial examples — imperceptible input perturbations that cause state-of-the-art image classifiers to fail — while validators construct challenges from real images, verify every response with mathematical precision, and reward the best attackers with on-chain emissions.
+
+Modern AI models achieve remarkable accuracy on clean data yet remain catastrophically brittle: a perturbation invisible to any human observer can make a production classifier misclassify a tumor scan, a stop sign, or a fraudulent transaction. The tooling to systematically discover these vulnerabilities is fragmented, expensive, and static. Perturb replaces it with a financially incentivized, continuously improving adversarial testing network — every day miners compete, attacks get stronger and the network's outputs get more valuable.
+
+The network produces two commercially valuable outputs:
+
+- **Adversarial training dataset** — a continuously growing corpus of verified adversarial examples, the raw material for adversarial training (the most effective known defense)
+- **Model robustness certificates** — on-chain, auditable proof of adversarial evaluation, relevant to EU AI Act conformity and enterprise AI procurement
+
+Why Bittensor: finding an adversarial example is computationally hard, but verifying one is trivially cheap — run the model, compare the prediction, measure the perturbation norm. This verification asymmetry makes the incentive mechanism clean, objective, and manipulation-resistant, while TAO emissions drive a level of continuous attack research no salaried red team can match.
+
+Read the full vision and roadmap in the [Perturb whitepaper](https://www.perturbai.io/whitepaper).
 
 This repository provides:
 
 - validator node implementation (`neurons/validator.py`)
 - baseline miner implementation (`neurons/miner.py`)
-- validator-side local LLM semantic verification service (`tools/llm_endpoint_service.py`)
-- one-command launchers for validator, miner, and llm endpoint
+- one-command launchers for validator and miner
 
 ## Architecture
 
 ### Validator responsibilities
 
-- Pull challenge images from Pexels Search API (`PERTURB_IMAGE_ENDPOINT`)
+- Sample challenge images from the full ImageNet-100 train split (~126k images, auto-downloaded)
 - Run fixed classifier (`EfficientNetV2-L`) on pulled image
-- Verify semantic consistency of model output vs prompt label through local `llm_endpoint`
 - Build and broadcast `AttackChallenge` synapse to selected miners
 - Verify miner responses and compute rewards
 - Maintain rolling histories and set on-chain weights periodically
 
 ### Miner responsibilities
 
-- Receive `AttackChallenge` over Axon
+- Poll the task API for the current task
 - Run baseline PGD-style attack
-- Return only `perturbed_image_b64`
+- Upload the perturbed image and submit its URL
 - Let validator handle all authoritative verification and scoring
 
 ### Challenge lifecycle
 
-1. Validator samples a prompt from `perturbnet/constants.py` (`PROMPTS`)
-2. Validator fetches image from Pexels using `query=<prompt>` and random page/photo selection
-3. If API pull fails, validator falls back to `assets/dog_1.jpg` and sets prompt to `dog`
-4. Validator runs `EfficientNetV2-L` and gets exact model label string
-5. Validator calls local `llm_endpoint` (`POST /verify-label`) to confirm semantic match between model label and prompt
-6. On success, validator creates challenge where `true_label` is the exact EfficientNet label
-7. Validator sends challenge to sampled miners and scores returned perturbations
+1. The team task generator samples an ImageNet-100 image and publishes one API task
+2. Miners poll the task API, perturb the task image, upload the result, and submit the image URL
+3. Validators read submitted miner images from the API
+4. Validators score responses and report the full miner results
 
 ## Hardware and System Requirements
 
@@ -48,11 +54,6 @@ This repository provides:
 
 - Minimum: 8 vCPU, 32 GB RAM, NVIDIA GPU with 12+ GB VRAM, 100 GB SSD
 - Recommended: 16 vCPU, 64 GB RAM, NVIDIA GPU with 24+ GB VRAM, 200 GB SSD
-
-### Validator-side llm_endpoint
-
-- Minimum: 2 vCPU, 4 GB RAM (assuming model already served by Ollama)
-- Recommended: run on same private network/host as validator for low latency
 
 ### Common software prerequisites
 
@@ -85,8 +86,7 @@ bash ./scripts/setup_common.sh validator
 
 `setup_common.sh` behavior by role:
 
-- `miner`: creates `.venv`, installs Python/Bittensor dependencies only
-- `validator`: also installs PM2, Ollama, starts `perturb-ollama`, and pulls `PERTURB_LLM_ENDPOINT_MODEL`
+- both roles: install PM2, create `.venv`, install Python/Bittensor dependencies
 
 If `npm: command not found`, install Node.js first, then rerun:
 
@@ -113,34 +113,7 @@ bash ./scripts/setup_common.sh validator
 
 This section is specifically for validator operators.
 
-### 1) Configure and run local llm_endpoint
-
-Create endpoint config:
-
-```bash
-cp scripts/llm_endpoint.env.example scripts/llm_endpoint.env
-```
-
-Edit `scripts/llm_endpoint.env`:
-
-- `LLM_ENDPOINT_HOST` (default `127.0.0.1`)
-- `LLM_ENDPOINT_PORT` (default `8081`)
-- `OLLAMA_URL` (default `http://127.0.0.1:11434`)
-- `PERTURB_LLM_ENDPOINT_MODEL` (default `qwen2.5:1.5b-instruct`)
-
-Start llm_endpoint:
-
-```bash
-bash ./scripts/run_llm_endpoint.sh
-```
-
-Health check:
-
-```bash
-curl "http://127.0.0.1:8081/health"
-```
-
-### 2) Configure validator runtime
+### 1) Configure validator runtime
 
 Create validator env:
 
@@ -152,29 +125,14 @@ Edit required fields in `scripts/validator.env`:
 
 - `WALLET_NAME`
 - `WALLET_HOTKEY`
-- `NETUID`
-- `NETWORK`
+- `PERTURB_API_KEY`
 
-Important validator-specific fields:
+Optional:
 
-- `PERTURB_IMAGE_ENDPOINT`
-- `PERTURB_PEXELS_API_KEY` (required)
-- `PERTURB_PEXELS_PER_PAGE`
-- `PERTURB_PEXELS_PAGE_SPAN`
-- `PERTURB_PEXELS_IMAGE_VARIANT` (`medium`, `large`, `original`, etc.)
-- `PERTURB_LLM_ENDPOINT_URL` (must point to your running llm endpoint, e.g. `http://127.0.0.1:8081/verify-label`)
-- `PERTURB_LLM_ENDPOINT_MODEL`
-- `PERTURB_K_MINERS`
-- `PERTURB_HISTORY_SIZE`
-- `PERTURB_MIN_PROCESSED_COUNT`
-- `PERTURB_MIN_LINF_DELTA`
-- `PERTURB_MAX_LINF_DELTA`
-- `PERTURB_WANDB_ENABLED` (`true` to enable validator metrics logging to Weights & Biases)
-- `PERTURB_WANDB_PROJECT`, `PERTURB_WANDB_ENTITY`, `PERTURB_WANDB_RUN_NAME`, `PERTURB_WANDB_MODE`
-- `PERTURB_WANDB_LOG_CONSOLE` (`true` to forward validator console logs to W&B as well)
-- `LOG_LEVEL` (`DEBUG` default, set `INFO`/`WARNING`/`ERROR` if you want quieter logs)
+- `PERTURB_API_BASE_URL`
+- `LOG_LEVEL` (`DEBUG` default, set `INFO`/`WARNING`/`ERROR` for quieter logs)
 
-### 3) Start validator stack (llm_endpoint + validator)
+### 2) Start validator
 
 ```bash
 bash ./scripts/run_validator.sh
@@ -182,15 +140,15 @@ bash ./scripts/run_validator.sh
 
 Expected log behavior:
 
-- challenge generation messages
-- miner selection messages
+- API task polling messages
+- submitted response scoring logs
 - per-miner score logs
 - periodic `set_weights` attempts
 
-### 4) Validator-side notes
+### 3) Validator-side notes
 
-- Verification is LLM-only by design; if llm_endpoint is down, challenge verification fails.
-- Keep fallback image `assets/dog_1.jpg` present for external image API outage handling.
+- Validators fetch the task image and submitted miner image URLs from the API, then run local verification and scoring.
+- Validators use miner-submitted response URLs in leaderboard reports.
 
 ## Installation and Setup (Miner Side)
 
@@ -215,6 +173,8 @@ Optional:
 
 - `PYTHON_BIN`
 - `LOG_LEVEL` (`DEBUG` default, set `INFO`/`WARNING`/`ERROR` if you want quieter logs)
+- `PERTURB_API_BASE_URL`
+- Storage credentials (`PERTURB_STORAGE_BACKEND`, `PERTURB_STORAGE_BUCKET`, `PERTURB_STORAGE_ACCESS_KEY_ID`, `PERTURB_STORAGE_SECRET_ACCESS_KEY`; Hippius is default, R2 is supported)
 - `MINER_EXTRA_ARGS`
 
 ### 2) Start miner
@@ -225,66 +185,40 @@ bash ./scripts/run_miner.sh
 
 Expected log behavior:
 
-- `Serving miner axon...`
-- `Miner started. Waiting for validator queries.`
+- `Miner started. Polling task API.`
+- task upload/submission messages
 
 ### 3) Miner-side notes
 
 - Baseline miner is intentionally simple; competitive miners should optimize attack logic.
-- Miner does not run llm_endpoint; semantic verification is validator-side only.
+- Miners don't serve an axon for challenge handling.
+- Validators handle all challenge verification and scoring.
+
+## Task Generation
+
+Task generation is run separately by the team through `generate_and_publish_task(...)`.
+
+The generator samples ImageNet-100, uploads the clean task image with the configured storage settings, and publishes the current API task with the provided hotkeys. Hippius is the default storage backend; set `PERTURB_STORAGE_BACKEND="r2"` to use R2.
 
 ## API and Protocol Contracts
 
-### Image API contract (validator input source)
+### Task API contract
 
-- Pexels endpoint: `GET https://api.pexels.com/v1/search`
-- Required header: `Authorization: <PEXELS_API_KEY>` (raw key, no Bearer prefix)
-- Validator sends params: `query`, `page`, `per_page`
-- Validator reads `photos[].src.<variant>` and downloads the selected image bytes
-- No custom `image_base64` API response is required; validator converts downloaded image bytes to base64 internally.
+- Task generator publishes the current task with `task_id` and `imageURL`.
+- Miners read the current task from `GET /task`.
+- Miners submit response image URLs to `POST /submits`.
+- Validators read submitted response image URLs from `GET /submits` (Bearer auth, available while task status is `validating`).
 
-### llm_endpoint contract (validator verification)
+### Task generator
 
-- Endpoint: `POST /verify-label`
-- Request JSON:
+Task generation is separated from validator runtime under `task_generator/`. It samples ImageNet-100, uploads the clean task image, and overwrites the current task row through the API.
 
-```json
-{
-  "prediction": "<efficientnet_label>",
-  "target_label": "<prompt_label>",
-  "llm_model": "<optional model hint>"
-}
-```
+### Leaderboard reporting
 
-- Response JSON must contain a boolean verdict key, typically:
+After each scoring round, validators submit a leaderboard report to the API configured in `perturbnet/constants.py`. Reports are queued in a background thread; leaderboard API failures, non-2xx responses, or timeouts are logged and skipped without affecting validator scoring.
 
-```json
-{
-  "is_match": true,
-  "reason": "short explanation",
-  "method": "ollama"
-}
-```
+Reports include network metrics and full miner details for every registered non-validator UID. Successful responses include presigned response-storage image URLs for UI display; miners without an exported image use the configured placeholder image.
 
-Operations endpoints:
-
-- `GET /health`
-- `GET /metrics`
-
-### Synapse contract (`AttackChallenge`)
-
-Key fields sent to miners:
-
-- `task_id`
-- `model_name` (fixed `EfficientNetV2-L`)
-- `prompt` (broad label)
-- `clean_image_b64`
-- `true_label` (exact EfficientNet class label)
-- `epsilon`, `norm_type`, `min_delta`, `timeout_seconds`
-
-Miner response field:
-
-- `perturbed_image_b64`
 
 ## Scoring and Weighting
 
@@ -300,20 +234,24 @@ Per-response score (if verification passes):
 - `linf_score = (1 - linf_ratio)^2`
 - `rmse_score = (1 - rmse_ratio)^2`
 - `perturbation_score = weighted_avg(linf_score, rmse_score)` using `PERTURB_LINF_COMPONENT_WEIGHT` and `PERTURB_RMSE_COMPONENT_WEIGHT`
-- `speed_score = 1 - min(response_time / timeout, 1)`
-- `final = PERTURB_PERTURBATION_WEIGHT * perturbation_score + PERTURB_SPEED_WEIGHT * speed_score`
+- `margin = best_non_true_logit - true_class_logit`
+- `margin_score = clamp(margin / 10, 0, 1)` using `ANALYZE_BUCKET_MARGIN_WEIGHT` (default `0.03`)
+- `novelty_score = clamp(changed_pixel_count / ANALYZE_BUCKET_NOVELTY_TARGET_PIXELS, 0, 1)` using `ANALYZE_BUCKET_NOVELTY_WEIGHT` (default `0.01`)
+- `final = PERTURB_PERTURBATION_WEIGHT * perturbation_score + margin_weight * margin_score + novelty_weight * novelty_score`
 
 Any verification or constraint failure gets `0.0`.
 
+Labels are normalized with `strip -> lowercase -> replace "_" with " "`. When possible, the validator resolves the true label to an EfficientNet class index and compares class indices instead of only strings, including comma-separated ImageNet label aliases. Miner responses are quantized onto the same uint8 PNG grid used by base64 image submissions before norms are measured, so nonzero `Linf` values are effectively multiples of `1/255`.
+
 Weight setting:
 
-- Only miners with `processed_count > 100` are weight-eligible
-- Emission schedule: top-5 only with fixed shares `62%, 24%, 9%, 4%, 1%` (ranks 6+ receive 0)
-- Final weights combine normalized rolling average and normalized rank bonus, then normalize to sum 1
+- Only miners with a full `PERTURB_HISTORY_SIZE` score history are weight-eligible
+- Emission schedule: rank 1 receives `70%`, rank 2 receives `15%`, and the remaining `15%` is split by descending rank weight among all other positive-score eligible miners
+- At each weight-setting cycle, the validator fetches `burnRate` from the burn endpoint configured in `perturbnet/constants.py` and assigns that share to the configured burn UID. Miner weights are scaled by `1 - burnRate`, keeping the submitted vector normalized. If the API is unavailable or invalid, the default burn rate from `constants.py` is used instead.
 
 ## Integration Smoke Test
 
-Run after llm_endpoint is up:
+Run after setup:
 
 ```bash
 python scripts/integration_smoke_test.py
@@ -321,18 +259,14 @@ python scripts/integration_smoke_test.py
 
 The smoke test validates:
 
-- llm_endpoint health and semantic sanity checks
-- image fetch from configured image endpoint
 - local EfficientNetV2-L inference path
-- challenge semantic verification through llm endpoint
+- scoring dependencies
 
 ## Troubleshooting
 
-- Validator fails verification loop: check `PERTURB_LLM_ENDPOINT_URL` and llm_endpoint health.
-- Frequent image API failures: verify `PERTURB_IMAGE_ENDPOINT` and `PERTURB_PEXELS_API_KEY`; fallback should load `assets/dog_1.jpg`.
+- Validator cannot generate challenges: verify internet access to Hugging Face for the first dataset download.
 - No miner scoring activity: ensure miner hotkeys are registered and publicly reachable.
 - Dependency install issues: install CUDA/CPU-specific PyTorch build compatible with your host.
-- Slow verifier responses: reduce model size or place llm_endpoint closer to validator process.
 
 ## Readiness
 
@@ -345,10 +279,10 @@ Use `docs/READINESS_CHECKLIST.md` before long-run validation or deployment.
 - `perturbnet/protocol.py`: `AttackChallenge` synapse schema
 - `perturbnet/model.py`: EfficientNet model load and label prediction helpers
 - `perturbnet/image_io.py`: base64 image encode/decode helpers
-- `tools/llm_endpoint_service.py`: validator-side semantic verification service
-- `scripts/run_llm_endpoint.sh`: start/restart llm endpoint with PM2 (auto-ensures Ollama + model)
+- `perturbnet/imagenet100_bootstrap.py`: ImageNet-100 full-split download/open helpers
 - `scripts/run_validator.sh`: start/restart validator with PM2
 - `scripts/run_miner.sh`: start/restart miner with PM2
-- `scripts/setup_common.sh`: role-aware bootstrap (`miner` = Python deps only, `validator` = adds PM2/Ollama/model)
+- `scripts/setup_common.sh`: role-aware bootstrap (PM2 + Python deps; `validator` also pre-downloads ImageNet-100)
+- `scripts/bootstrap_imagenet100.py`: manual ImageNet-100 pre-download CLI
 - `scripts/integration_smoke_test.py`: local integration test
 

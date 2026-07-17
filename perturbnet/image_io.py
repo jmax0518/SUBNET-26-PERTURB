@@ -4,6 +4,7 @@ import base64
 import io
 
 import numpy as np
+import requests
 import torch
 from PIL import Image
 
@@ -22,4 +23,24 @@ def encode_image_b64(image_chw: torch.Tensor) -> str:
     buffer = io.BytesIO()
     image.save(buffer, format="PNG")
     return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+def image_url_to_b64(image_url: str, *, timeout_seconds: float = 10.0) -> str:
+    response = requests.get(image_url, timeout=timeout_seconds)
+    if response.status_code < 200 or response.status_code >= 300:
+        raise RuntimeError(f"image download failed HTTP {response.status_code}: {response.text[:120]}")
+    image = Image.open(io.BytesIO(response.content)).convert("RGB")
+    buffer = io.BytesIO()
+    image.save(buffer, format="PNG")
+    return base64.b64encode(buffer.getvalue()).decode("utf-8")
+
+
+def quantize_image_uint8_grid(image_chw: torch.Tensor) -> torch.Tensor:
+    return (image_chw.detach().clamp(0.0, 1.0) * 255.0).round().div(255.0)
+
+
+def changed_pixel_count(x_clean: torch.Tensor, x_adv: torch.Tensor) -> int:
+    if x_clean.shape != x_adv.shape or x_clean.ndim != 3:
+        return 0
+    return int((x_clean != x_adv).any(dim=0).sum().item())
 

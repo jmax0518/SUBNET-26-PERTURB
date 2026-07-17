@@ -14,9 +14,10 @@ setup(
         "numpy>=1.26.0",
         "pillow>=10.0.0",
         "requests>=2.31.0",
+        "datasets>=2.19.0",
         "fastapi>=0.111.0",
         "uvicorn>=0.30.0",
-        "wandb",
+        "boto3",
     ],
 )
 
